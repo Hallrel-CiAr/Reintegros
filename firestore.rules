@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Cambiá este email si en algún momento cambia quién administra el sistema.
+    // Tiene que ser EXACTAMENTE el mismo valor que OWNER_EMAIL en firebase-config.js.
+    function ownerEmail() { return 'matiasldg@gmail.com'; }
+
+    function isOwner() {
+      return request.auth != null && request.auth.token.email == ownerEmail();
+    }
+    function isEditor() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/config/editors) &&
+        request.auth.token.email in get(/databases/$(database)/documents/config/editors).data.emails;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Lista de personas autorizadas a editar (además del dueño).
+    // Solo el dueño puede modificarla; cualquier persona logueada puede leerla
+    // (la app la usa para saber si a quien entró le corresponde ver los
+    // controles de edición).
+    match /config/editors {
+      allow read: if isSignedIn();
+      allow write: if isOwner();
+    }
+
+    // Valores relevados. Cualquier persona logueada con Gmail puede
+    // consultarlos; solo el dueño y las personas autorizadas pueden
+    // cargarlos o corregirlos.
+    match /records/{recordId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || isEditor();
+    }
+
+    // Historial de cambios (auditoría). Es de solo agregar: una vez escrito
+    // un cambio, nadie —ni siquiera el dueño— puede editarlo o borrarlo desde
+    // la app, para que el registro sea confiable.
+    match /historial/{entryId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner() || isEditor();
+      allow update, delete: if false;
+    }
+  }
+}
