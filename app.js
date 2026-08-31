@@ -238,6 +238,7 @@ const RealBackend = {
   },
   async signIn() {
     const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     await this._auth.signInWithPopup(provider);
   },
   async signOut() { await this._auth.signOut(); },
@@ -773,14 +774,51 @@ function applyEditLock() {
   if (importFile) importFile.disabled = !canEdit;
 }
 function renderAuthBox() {
-  const box = document.getElementById('authbox');
-  if (!currentUser) { box.innerHTML = ''; return; }
+  const mainNav = document.getElementById('mainNav');
+  const box = document.getElementById('navUserInfo');
+  if (!currentUser) { mainNav.hidden = true; box.innerHTML = ''; return; }
+  mainNav.hidden = false;
   const initials = (currentUser.displayName || currentUser.email).slice(0, 1).toUpperCase();
   box.innerHTML = '<span class="avatar">' + escapeHtml(initials) + '</span>' +
     '<span class="who"><span class="name">' + escapeHtml(currentUser.displayName || currentUser.email) + '</span>' +
-    '<span class="role">' + (isOwner ? 'Administrador' : canEdit ? 'Puede editar' : 'Solo lectura') + '</span></span>' +
-    '<button class="btn small secondary" id="btnSignOut" type="button">Cerrar sesión</button>';
-  document.getElementById('btnSignOut').addEventListener('click', () => Backend.signOut());
+    '<span class="role">' + (isOwner ? 'Administrador' : canEdit ? 'Puede editar' : 'Solo lectura') + '</span></span>';
+}
+
+/* ============================================================
+   Navegación por menú (una vista visible a la vez)
+   ============================================================ */
+let activeView = 'consulta';
+function closeAllMenus() {
+  document.querySelectorAll('.navitem.open').forEach(el => el.classList.remove('open'));
+}
+function showView(view) {
+  if (view === 'accesos' && !isOwner) view = 'consulta';
+  document.querySelectorAll('.view-panel').forEach(p => { p.hidden = p.dataset.view !== view; });
+  activeView = view;
+  closeAllMenus();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  if (view === 'historial-auditoria') renderAudit();
+}
+function wireNav() {
+  document.querySelectorAll('.navitem').forEach(item => {
+    const btn = item.querySelector('.navbtn');
+    btn.addEventListener('click', e => {
+      if (btn.dataset.view) { showView(btn.dataset.view); return; }
+      e.stopPropagation();
+      const wasOpen = item.classList.contains('open');
+      closeAllMenus();
+      if (!wasOpen) item.classList.add('open');
+    });
+  });
+  document.querySelectorAll('.dropdown-item[data-view]').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
+  document.addEventListener('click', () => closeAllMenus());
+  document.querySelector('[data-action="sign-out"]').addEventListener('click', () => Backend.signOut());
+  document.querySelector('[data-action="switch-user"]').addEventListener('click', async () => {
+    await Backend.signOut();
+    try { await Backend.signIn(); } catch { /* la persona puede iniciar sesión desde la pantalla de acceso */ }
+  });
+  document.getElementById('brandHome').addEventListener('click', () => showView('consulta'));
+  document.getElementById('brandHome').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showView('consulta'); } });
 }
 function renderEditorList() {
   const wrap = document.getElementById('editorList');
@@ -835,7 +873,8 @@ function onAuthChange(user) {
   gate.hidden = true; appBody.hidden = false;
   isOwner = user.email === OWNER_EMAIL;
   canEdit = isOwner || editorsEmails.includes(user.email);
-  document.getElementById('adminBlock').hidden = !isOwner;
+  document.getElementById('navAccesosItem').hidden = !isOwner;
+  if (!isOwner && activeView === 'accesos') showView('consulta');
   renderAuthBox(); updateEditPill(); applyEditLock();
   if (isOwner) renderEditorList();
 }
@@ -897,6 +936,7 @@ function init() {
   document.getElementById('pendingBanner').addEventListener('click', e => {
     if (e.target.id !== 'gotoPending') return;
     document.getElementById('mFecha').value = todayStr();
+    showView('carga-manual');
     renderManualTable();
     const firstPending = document.querySelector('#manualTbody tr.pending-row .empresa-select');
     if (firstPending) firstPending.focus();
@@ -904,6 +944,7 @@ function init() {
   wireManualTable();
   wireImport();
   wireAdminPanel();
+  wireNav();
 
   document.getElementById('btnSignIn').addEventListener('click', async () => {
     try { await Backend.signIn(); } catch (err) { toast('No se pudo iniciar sesión: ' + (err && err.message ? err.message : 'error')); }

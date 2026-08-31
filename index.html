@@ -72,13 +72,24 @@
   .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 100px; font-size: 12.5px; font-weight: 500; border: 1px solid var(--line-strong); background: var(--surface); white-space: nowrap; }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: none; }
 
-  .authbox { display: flex; align-items: center; gap: 8px; }
   .avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-soft-ink); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex: none; }
   .who { display: flex; flex-direction: column; line-height: 1.25; }
   .who .name { font-size: 12.5px; font-weight: 500; color: var(--ink); }
   .who .role { font-size: 11px; color: var(--ink-muted); }
 
-  section.block { margin-top: 26px; }
+  /* --- Menú principal --- */
+  nav.mainnav { max-width: 1120px; margin: 0 auto; padding: 0 20px; display: flex; gap: 2px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+  .navitem { position: relative; }
+  .navbtn { display: flex; align-items: center; gap: 5px; background: none; border: none; color: var(--ink-muted); font-weight: 500; font-size: 13.5px; padding: 9px 10px; cursor: pointer; border-radius: 6px; }
+  .navbtn:hover, .navitem.open .navbtn, .navbtn.active { color: var(--ink); background: var(--surface-2); }
+  .navbtn .care { font-size: 10px; color: var(--ink-faint); }
+  .dropdown { position: absolute; top: calc(100% + 4px); left: 0; min-width: 240px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: none; flex-direction: column; gap: 1px; z-index: 10; }
+  .navitem.open .dropdown { display: flex; }
+  .dropdown-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--ink); font-size: 13.5px; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+  .dropdown-item:hover { background: var(--surface-2); }
+  .dropdown-user { display: flex; align-items: center; gap: 8px; padding: 6px 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+
+  .view-panel { margin-top: 22px; }
   .block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }
   .block-head h2 { font-size: 18px; }
   .block-head p.hint { margin: 3px 0 0; color: var(--ink-muted); font-size: 13px; max-width: 66ch; }
@@ -141,17 +152,6 @@
   tr:hover .row-save, tr.dirty .row-save { opacity: 1; }
   tr.dirty td { background: var(--accent-soft); }
 
-  details.manual-panel summary, details.admin-panel summary { cursor: pointer; font-family: "Newsreader", serif; font-size: 18px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
-  details.manual-panel summary::-webkit-details-marker, details.admin-panel summary::-webkit-details-marker { display: none; }
-  details.manual-panel summary .chev, details.admin-panel summary .chev { transition: transform .15s; color: var(--ink-muted); }
-  details.manual-panel[open] summary .chev, details.admin-panel[open] summary .chev { transform: rotate(90deg); }
-  details.manual-panel .card, details.admin-panel .card { margin-top: 12px; }
-
-  .report-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  @media (max-width: 960px) { .report-grid { grid-template-columns: 1fr; } }
-  .report-card.wide { grid-column: 1 / -1; }
-  .report-card h3 { font-size: 15px; margin-bottom: 4px; }
-  .report-card p.hint { margin: 0 0 10px; color: var(--ink-muted); font-size: 12.5px; }
   .report-card .field-row { align-items: flex-end; }
   .report-card .field { min-width: 0; flex: 1; }
 
@@ -168,10 +168,10 @@
   .empty-state h3 { font-size: 16px; margin-bottom: 5px; color: var(--ink); }
   .empty-state p { max-width: 46ch; margin: 0 auto; font-size: 13px; }
 
-  .gate { min-height: 60vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; }
-  .gate-card { max-width: 420px; }
-  .gate-card h2 { font-size: 22px; margin-bottom: 8px; }
-  .gate-card p { color: var(--ink-muted); font-size: 13.5px; margin-bottom: 18px; }
+  .gate { display: flex; justify-content: center; padding: 28px 20px; text-align: center; }
+  .gate-card { max-width: 380px; padding: 20px; }
+  .gate-card h2 { font-size: 17px; margin-bottom: 4px; }
+  .gate-card p { color: var(--ink-muted); font-size: 13px; margin-bottom: 14px; }
 
   .modal-backdrop { position: fixed; inset: 0; background: rgba(10,14,12,.45); display: flex; align-items: center; justify-content: center; z-index: 40; padding: 20px; }
   .modal { background: var(--surface); border-radius: 14px; max-width: 460px; width: 100%; padding: 20px; box-shadow: var(--shadow); border: 1px solid var(--line); }
@@ -187,16 +187,46 @@
 <body>
 <header class="top">
   <div class="top-inner">
-    <div class="brand">
+    <div class="brand" id="brandHome" role="button" tabindex="0">
       <span class="eyebrow">SOSUNC · Dirección Social</span>
       <h1>Pasajes de referencia para reintegros</h1>
     </div>
     <div class="top-status" id="topStatus">
       <span class="pill" id="editPill"><span class="dot"></span><span id="editPillText">Cargando…</span></span>
       <span class="pill" id="countPill" hidden>—</span>
-      <span id="authbox" class="authbox"></span>
     </div>
   </div>
+  <nav class="mainnav" id="mainNav" hidden>
+    <div class="navitem" data-menu="sesion">
+      <button class="navbtn" type="button">Sesión <span class="care">▾</span></button>
+      <div class="dropdown">
+        <div class="dropdown-user" id="navUserInfo"></div>
+        <button class="dropdown-item" type="button" data-action="switch-user">Cambiar usuario</button>
+        <button class="dropdown-item" type="button" data-action="sign-out">Cerrar sesión</button>
+      </div>
+    </div>
+    <div class="navitem" data-menu="reportes">
+      <button class="navbtn" type="button">Reportes <span class="care">▾</span></button>
+      <div class="dropdown">
+        <button class="dropdown-item" type="button" data-view="reporte-comprobante">Comprobante para un expediente</button>
+        <button class="dropdown-item" type="button" data-view="reporte-completitud">Completitud del relevamiento</button>
+        <button class="dropdown-item" type="button" data-view="reporte-importar">Importar CSV</button>
+      </div>
+    </div>
+    <div class="navitem" data-menu="historial">
+      <button class="navbtn" type="button">Historial <span class="care">▾</span></button>
+      <div class="dropdown">
+        <button class="dropdown-item" type="button" data-view="historial-auditoria">Auditoría</button>
+        <button class="dropdown-item" type="button" data-view="historial-exportacion">Exportación</button>
+      </div>
+    </div>
+    <div class="navitem">
+      <button class="navbtn" type="button" data-view="carga-manual">Carga Manual</button>
+    </div>
+    <div class="navitem" id="navAccesosItem" hidden>
+      <button class="navbtn" type="button" data-view="accesos">Accesos</button>
+    </div>
+  </nav>
 </header>
 
 <div class="shell">
@@ -215,7 +245,7 @@
 
   <div id="appBody" hidden>
 
-  <section class="block" id="consultaBlock">
+  <section class="view-panel" id="consultaBlock" data-view="consulta">
     <div class="block-head">
       <div>
         <h2>Consultar un valor</h2>
@@ -237,163 +267,164 @@
     </div>
   </section>
 
-  <section class="block" id="reportesBlock">
-    <div class="block-head">
-      <div>
-        <h2>Reportes</h2>
-        <p class="hint">Documentos para reintegros y seguimiento del relevamiento.</p>
+  <section class="view-panel" data-view="reporte-comprobante" hidden>
+    <div class="block-head"><div><h2>Comprobante para un expediente</h2>
+      <p class="hint">Constancia de una fecha, ruta y categoría puntual, para adjuntar a un expediente de reintegro.</p>
+    </div></div>
+    <div class="card report-card">
+      <div class="field-row">
+        <div class="field">
+          <label for="cFecha">Fecha de viaje</label>
+          <input type="date" id="cFecha" />
+        </div>
+        <div class="field">
+          <label for="cMedio">Medio</label>
+          <select id="cMedio">
+            <option value="aereo">Aéreo</option>
+            <option value="terrestre">Terrestre</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cRuta">Ruta</label>
+          <select id="cRuta"></select>
+        </div>
+        <div class="field">
+          <label for="cCategoria">Categoría</label>
+          <select id="cCategoria"></select>
+        </div>
       </div>
+      <div style="margin-top:12px;"><button class="btn secondary" id="btnComprobante" type="button">Generar comprobante (PDF)</button></div>
     </div>
-    <div class="report-grid">
-      <div class="card report-card">
-        <h3>Comprobante para un expediente</h3>
-        <p class="hint">Constancia de una fecha, ruta y categoría puntual, para adjuntar a un expediente de reintegro.</p>
-        <div class="field-row">
-          <div class="field">
-            <label for="cFecha">Fecha de viaje</label>
-            <input type="date" id="cFecha" />
-          </div>
-          <div class="field">
-            <label for="cMedio">Medio</label>
-            <select id="cMedio">
-              <option value="aereo">Aéreo</option>
-              <option value="terrestre">Terrestre</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="cRuta">Ruta</label>
-            <select id="cRuta"></select>
-          </div>
-          <div class="field">
-            <label for="cCategoria">Categoría</label>
-            <select id="cCategoria"></select>
-          </div>
-        </div>
-        <div style="margin-top:12px;"><button class="btn secondary" id="btnComprobante" type="button">Generar comprobante (PDF)</button></div>
-      </div>
+  </section>
 
-      <div class="card report-card">
-        <h3>Completitud del relevamiento</h3>
-        <p class="hint">Días y rutas del rango elegido que quedaron sin valor cargado.</p>
-        <div class="field-row">
-          <div class="field">
-            <label for="rcDesde">Desde</label>
-            <input type="date" id="rcDesde" />
-          </div>
-          <div class="field">
-            <label for="rcHasta">Hasta</label>
-            <input type="date" id="rcHasta" />
-          </div>
+  <section class="view-panel" data-view="reporte-completitud" hidden>
+    <div class="block-head"><div><h2>Completitud del relevamiento</h2>
+      <p class="hint">Días y rutas del rango elegido que quedaron sin valor cargado.</p>
+    </div></div>
+    <div class="card report-card">
+      <div class="field-row">
+        <div class="field">
+          <label for="rcDesde">Desde</label>
+          <input type="date" id="rcDesde" />
         </div>
-        <div style="margin-top:12px;"><button class="btn secondary" id="btnCompletitud" type="button">Generar reporte (CSV)</button></div>
+        <div class="field">
+          <label for="rcHasta">Hasta</label>
+          <input type="date" id="rcHasta" />
+        </div>
       </div>
+      <div style="margin-top:12px;"><button class="btn secondary" id="btnCompletitud" type="button">Generar reporte (CSV)</button></div>
+    </div>
+  </section>
 
-      <div class="card report-card">
-        <h3>Importar CSV</h3>
-        <p class="hint">Restaura datos desde un CSV exportado por esta misma página (por ejemplo, un respaldo previo). Sirve para no perder la carga acumulada ante un cambio grande.</p>
-        <div class="field-row">
-          <div class="field" style="flex:1;">
-            <label for="importFile">Archivo CSV</label>
-            <input type="file" id="importFile" accept=".csv,text/csv" />
-          </div>
+  <section class="view-panel" data-view="reporte-importar" hidden>
+    <div class="block-head"><div><h2>Importar CSV</h2>
+      <p class="hint">Restaura datos desde un CSV exportado por esta misma página (por ejemplo, un respaldo previo). Sirve para no perder la carga acumulada ante un cambio grande.</p>
+    </div></div>
+    <div class="card report-card">
+      <div class="field-row">
+        <div class="field" style="flex:1;">
+          <label for="importFile">Archivo CSV</label>
+          <input type="file" id="importFile" accept=".csv,text/csv" />
         </div>
-        <div style="margin-top:12px;"><button class="btn secondary" id="btnImport" type="button" disabled>Revisar e importar</button></div>
-        <p class="hint" id="importStatus" style="margin-top:8px;"></p>
       </div>
+      <div style="margin-top:12px;"><button class="btn secondary" id="btnImport" type="button" disabled>Revisar e importar</button></div>
+      <p class="hint" id="importStatus" style="margin-top:8px;"></p>
+    </div>
+  </section>
 
-      <div class="card report-card wide">
-        <h3>Historial y exportación</h3>
-        <p class="hint">Todos los registros cargados hasta hoy. Filtrá por rango, medio y ruta, y exportá.</p>
-        <div class="field-row">
-          <div class="field">
-            <label for="hDesde">Desde</label>
-            <input type="date" id="hDesde" />
-          </div>
-          <div class="field">
-            <label for="hHasta">Hasta</label>
-            <input type="date" id="hHasta" />
-          </div>
-          <div class="field">
-            <label for="hMedio">Medio</label>
-            <select id="hMedio">
-              <option value="">Todos</option>
-              <option value="aereo">Aéreo</option>
-              <option value="terrestre">Terrestre</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="hRuta">Ruta</label>
-            <select id="hRuta"><option value="">Todas</option></select>
-          </div>
-          <button class="btn secondary" id="hExport" type="button">Exportar CSV</button>
+  <section class="view-panel" data-view="historial-exportacion" hidden>
+    <div class="block-head"><div><h2>Historial y exportación</h2>
+      <p class="hint">Todos los registros cargados hasta hoy. Filtrá por rango, medio y ruta, y exportá.</p>
+    </div></div>
+    <div class="card report-card">
+      <div class="field-row">
+        <div class="field">
+          <label for="hDesde">Desde</label>
+          <input type="date" id="hDesde" />
         </div>
-        <p class="hint" id="hCount" style="margin-top:10px;"></p>
+        <div class="field">
+          <label for="hHasta">Hasta</label>
+          <input type="date" id="hHasta" />
+        </div>
+        <div class="field">
+          <label for="hMedio">Medio</label>
+          <select id="hMedio">
+            <option value="">Todos</option>
+            <option value="aereo">Aéreo</option>
+            <option value="terrestre">Terrestre</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="hRuta">Ruta</label>
+          <select id="hRuta"><option value="">Todas</option></select>
+        </div>
+        <button class="btn secondary" id="hExport" type="button">Exportar CSV</button>
       </div>
+      <p class="hint" id="hCount" style="margin-top:10px;"></p>
+    </div>
+  </section>
 
-      <div class="card report-card wide">
-        <h3>Historial de cambios (auditoría)</h3>
-        <p class="hint">Quién cargó o modificó cada valor y cuándo — incluye lo cargado automáticamente, a mano y por importación de CSV.</p>
-        <div class="field-row">
-          <div class="field">
-            <label for="auDesde">Desde</label>
-            <input type="date" id="auDesde" />
-          </div>
-          <div class="field">
-            <label for="auHasta">Hasta</label>
-            <input type="date" id="auHasta" />
-          </div>
-          <button class="btn secondary" id="auRefresh" type="button">Ver cambios</button>
-          <button class="btn secondary" id="auExport" type="button">Exportar CSV</button>
+  <section class="view-panel" data-view="historial-auditoria" hidden>
+    <div class="block-head"><div><h2>Historial de cambios (auditoría)</h2>
+      <p class="hint">Quién cargó o modificó cada valor y cuándo — incluye lo cargado automáticamente, a mano y por importación de CSV.</p>
+    </div></div>
+    <div class="card report-card">
+      <div class="field-row">
+        <div class="field">
+          <label for="auDesde">Desde</label>
+          <input type="date" id="auDesde" />
         </div>
-        <div class="table-wrap" style="margin-top:12px;">
-          <table>
-            <thead><tr><th>Cuándo</th><th>Quién</th><th>Acción</th><th>Fecha de viaje</th><th>Ruta / Categoría</th><th>Qué cambió</th></tr></thead>
-            <tbody id="auditTbody"><tr><td colspan="6" class="hint" style="padding:14px 8px;">Elegí un rango y tocá "Ver cambios".</td></tr></tbody>
-          </table>
+        <div class="field">
+          <label for="auHasta">Hasta</label>
+          <input type="date" id="auHasta" />
         </div>
+        <button class="btn secondary" id="auRefresh" type="button">Ver cambios</button>
+        <button class="btn secondary" id="auExport" type="button">Exportar CSV</button>
+      </div>
+      <div class="table-wrap" style="margin-top:12px;">
+        <table>
+          <thead><tr><th>Cuándo</th><th>Quién</th><th>Acción</th><th>Fecha de viaje</th><th>Ruta / Categoría</th><th>Qué cambió</th></tr></thead>
+          <tbody id="auditTbody"><tr><td colspan="6" class="hint" style="padding:14px 8px;">Elegí un rango y tocá "Ver cambios".</td></tr></tbody>
+        </table>
       </div>
     </div>
   </section>
 
-  <section class="block" id="manualBlock">
-    <details class="manual-panel" id="manualPanel">
-      <summary><span class="chev">▸</span> Carga y corrección manual</summary>
-      <div class="card">
-        <div id="pendingBanner"></div>
-        <p class="hint" style="margin:0 0 12px;">Una fila por categoría. Podés cargar cualquier fecha, incluidas anteriores. Lo que edites a mano queda marcado como <strong>Manual</strong>, con tu usuario y la hora.</p>
-        <div class="field-row" style="margin-bottom:12px;">
-          <div class="field">
-            <label for="mFecha">Fecha a cargar</label>
-            <input type="date" id="mFecha" />
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Medio</th><th>Ruta</th><th>Categoría</th><th>Empresa</th><th>Valor (ARS, por pasajero)</th><th>Fuente</th><th>Estado</th><th></th></tr>
-            </thead>
-            <tbody id="manualTbody"></tbody>
-          </table>
+  <section class="view-panel" data-view="carga-manual" hidden>
+    <div class="block-head"><div><h2>Carga y corrección manual</h2></div></div>
+    <div class="card">
+      <div id="pendingBanner"></div>
+      <p class="hint" style="margin:0 0 12px;">Una fila por categoría. Podés cargar cualquier fecha, incluidas anteriores. Lo que edites a mano queda marcado como <strong>Manual</strong>, con tu usuario y la hora.</p>
+      <div class="field-row" style="margin-bottom:12px;">
+        <div class="field">
+          <label for="mFecha">Fecha a cargar</label>
+          <input type="date" id="mFecha" />
         </div>
       </div>
-    </details>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Medio</th><th>Ruta</th><th>Categoría</th><th>Empresa</th><th>Valor (ARS, por pasajero)</th><th>Fuente</th><th>Estado</th><th></th></tr>
+          </thead>
+          <tbody id="manualTbody"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
-  <section class="block" id="adminBlock" hidden>
-    <details class="admin-panel" id="adminPanel">
-      <summary><span class="chev">▸</span> Gestionar accesos</summary>
-      <div class="card">
-        <p class="hint" style="margin:0 0 10px;">Solo vos ves esta sección. Las personas de esta lista pueden cargar y corregir valores iniciando sesión con su cuenta de Gmail. Vos siempre podés editar, no hace falta agregarte.</p>
-        <div class="editor-list" id="editorList"></div>
-        <div class="field-row">
-          <div class="field" style="flex:1;">
-            <label for="newEditorEmail">Agregar por Gmail</label>
-            <input type="email" id="newEditorEmail" placeholder="persona@gmail.com" />
-          </div>
-          <button class="btn small secondary" id="btnAddEditor" type="button">Agregar</button>
+  <section class="view-panel" data-view="accesos" hidden>
+    <div class="block-head"><div><h2>Gestionar accesos</h2></div></div>
+    <div class="card">
+      <p class="hint" style="margin:0 0 10px;">Solo vos ves esta sección. Las personas de esta lista pueden cargar y corregir valores iniciando sesión con su cuenta de Gmail. Vos siempre podés editar, no hace falta agregarte.</p>
+      <div class="editor-list" id="editorList"></div>
+      <div class="field-row">
+        <div class="field" style="flex:1;">
+          <label for="newEditorEmail">Agregar por Gmail</label>
+          <input type="email" id="newEditorEmail" placeholder="persona@gmail.com" />
         </div>
+        <button class="btn small secondary" id="btnAddEditor" type="button">Agregar</button>
       </div>
-    </details>
+    </div>
   </section>
 
   <footer class="note">
