@@ -1,7 +1,7 @@
 'use strict';
 
 /* ============================================================
-   Datos fijos: rutas, categorías, empresas conocidas
+   Datos fijos: rutas, empresas conocidas
    ============================================================ */
 const AIR_ROUTES = [
   { code: 'NQN-CABA', label: 'Neuquén → CABA' },
@@ -14,14 +14,8 @@ const BUS_ROUTES = [
   { code: 'VDM-CABA', label: 'Viedma → CABA' },
   { code: 'ROC-CABA', label: 'General Roca → CABA' }
 ];
-const AIR_SLOTS = [
-  { n: 1, categoria: 'Turista', hint: 'Tarifa Turista (económica) de Aerolíneas Argentinas para esa fecha y ruta.' },
-  { n: 2, categoria: 'Ejecutiva', hint: 'Tarifa Ejecutiva de Aerolíneas Argentinas para esa fecha y ruta, cuando esté disponible.' }
-];
-const BUS_SLOTS = [
-  { n: 1, categoria: 'Semicama', hint: 'Tarifa Semicama disponible ese día.' },
-  { n: 2, categoria: 'Cama Ejecutivo', hint: 'Tarifa Cama Ejecutivo disponible ese día.' }
-];
+// Un solo valor de referencia por ruta y medio: aéreo = tarifa más económica
+// encontrada; terrestre = promedio de los servicios disponibles ese día.
 const AIR_COMPANIES = ['Aerolíneas Argentinas', 'JetSmart', 'Flybondi'];
 const BUS_COMPANIES = ['Chevallier', 'Andesmar', 'Condor Estrella', 'Via Bariloche'];
 const OTRA_VALUE = '__otra__';
@@ -39,7 +33,7 @@ let isOwner = false;
 let authReady = false;
 
 /* ============================================================
-   Utilidades de fecha / formato (igual que la versión anterior)
+   Utilidades de fecha / formato
    ============================================================ */
 function todayStr() {
   const d = new Date();
@@ -67,7 +61,6 @@ function fmtDateTime(iso) {
   return new Date(iso).toLocaleString('es-AR');
 }
 function routesFor(medio) { return medio === 'aereo' ? AIR_ROUTES : BUS_ROUTES; }
-function slotsFor(medio) { return medio === 'aereo' ? AIR_SLOTS : BUS_SLOTS; }
 function companiesFor(medio) { return medio === 'aereo' ? AIR_COMPANIES : BUS_COMPANIES; }
 function routeLabel(medio, code) {
   const r = routesFor(medio).find(r => r.code === code);
@@ -75,22 +68,22 @@ function routeLabel(medio, code) {
 }
 function medioLabel(medio) { return medio === 'aereo' ? 'Aéreo' : 'Terrestre'; }
 function recordValid(rec) { return !!(rec && rec.empresa && rec.valor != null && rec.valor !== ''); }
-function recordId(fecha, medio, ruta, slot) { return [fecha, medio, ruta, slot].join('|'); }
+function recordId(fecha, medio, ruta) { return [fecha, medio, ruta].join('|'); }
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function escapeAttr(s) { return escapeHtml(s); }
 
-function findRecord(fecha, medio, ruta, slot) {
-  const id = recordId(fecha, medio, ruta, slot);
+function findRecord(fecha, medio, ruta) {
+  const id = recordId(fecha, medio, ruta);
   return DB.records.find(r => r.id === id);
 }
-function allSlotsForDate(fecha) {
+function allRoutesForDate(fecha) {
   const out = [];
-  for (const r of AIR_ROUTES) for (const s of AIR_SLOTS) out.push({ medio: 'aereo', ruta: r.code, slot: s.n });
-  for (const r of BUS_ROUTES) for (const s of BUS_SLOTS) out.push({ medio: 'terrestre', ruta: r.code, slot: s.n });
+  for (const r of AIR_ROUTES) out.push({ medio: 'aereo', ruta: r.code });
+  for (const r of BUS_ROUTES) out.push({ medio: 'terrestre', ruta: r.code });
   return out.map(x => ({ ...x, fecha }));
 }
-function pendingSlotsForDate(fecha) {
-  return allSlotsForDate(fecha).filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta, s.slot)));
+function pendingRoutesForDate(fecha) {
+  return allRoutesForDate(fecha).filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta)));
 }
 function recordsInRange(desde, hasta, medio, ruta) {
   let rows = DB.records.filter(recordValid);
@@ -119,7 +112,7 @@ function buildHistoryEntry({ id, before, after, accion, user }) {
   const now = new Date();
   const tsIso = now.toISOString();
   return {
-    recordId: id, fecha: after.fecha, medio: after.medio, ruta: after.ruta, slot: after.slot, categoria: after.categoria,
+    recordId: id, fecha: after.fecha, medio: after.medio, ruta: after.ruta,
     accion, cambios: diffSummary(before, after),
     userEmail: user.email, userName: user.displayName || user.email,
     ts: tsIso, tsDate: tsIso.slice(0, 10)
@@ -316,14 +309,6 @@ function showModal({ title, bodyHtml, confirmText, cancelText, onConfirm }) {
 /* ============================================================
    Render: selects genéricos
    ============================================================ */
-function populateCategoriaSelect(sel, medio) {
-  sel.innerHTML = '';
-  for (const s of slotsFor(medio)) {
-    const o = document.createElement('option');
-    o.value = String(s.n); o.textContent = s.categoria;
-    sel.appendChild(o);
-  }
-}
 function populateSelect(sel, routes, withAll) {
   sel.innerHTML = '';
   if (withAll) {
@@ -358,23 +343,18 @@ function renderConsulta() {
     const routes = routesFor(medio);
     const targetRoutes = ruta ? routes.filter(r => r.code === ruta) : routes;
     let html = '<div><div class="group-label"><span class="swatch ' + swatchClass + '"></span>' + label + '</div><div class="fare-list">';
-    let any = false;
     for (const r of targetRoutes) {
-      for (const s of slotsFor(medio)) {
-        const rec = findRecord(fecha, medio, r.code, s.n);
-        any = true;
-        if (recordValid(rec)) {
-          html += '<div class="fare-card"><div class="who2"><span class="empresa">' + escapeHtml(rec.empresa) + '</span>' +
-            '<span class="categoria">' + (targetRoutes.length > 1 ? escapeHtml(r.label) + ' · ' : '') + escapeHtml(rec.categoria || '') + '</span>' +
-            '<span class="fuente" title="' + escapeHtml((rec.fuente && rec.fuente.texto) || '') + '">' + escapeHtml((rec.fuente && rec.fuente.texto) || 'sin fuente') + '</span>' +
-            '<button type="button" class="histbtn" data-hist-record="' + escapeAttr(rec.id) + '">Ver historial</button></div>' +
-            '<div class="right"><span class="valor num">' + fmtARS(rec.valor) + '</span>' + badgeHtml(rec.tipo) + '</div></div>';
-        } else {
-          html += '<div class="empty-slot"><span>' + (targetRoutes.length > 1 ? escapeHtml(r.label) + ' — ' : '') + escapeHtml(s.categoria) + ': sin dato</span></div>';
-        }
+      const rec = findRecord(fecha, medio, r.code);
+      if (recordValid(rec)) {
+        html += '<div class="fare-card"><div class="who2"><span class="empresa">' + escapeHtml(rec.empresa) + '</span>' +
+          '<span class="fuente" title="' + escapeHtml((rec.fuente && rec.fuente.texto) || '') + '">' + escapeHtml(r.label) + (rec.fuente && rec.fuente.texto ? ' · ' + rec.fuente.texto : '') + '</span>' +
+          '<button type="button" class="histbtn" data-hist-record="' + escapeAttr(rec.id) + '">Ver historial</button></div>' +
+          '<div class="right"><span class="valor num">' + fmtARS(rec.valor) + '</span>' + badgeHtml(rec.tipo) + '</div></div>';
+      } else {
+        html += '<div class="empty-slot"><span>' + escapeHtml(r.label) + ': sin dato</span></div>';
       }
     }
-    if (!any) html += '<div class="empty-slot"><span>Sin rutas para mostrar.</span></div>';
+    if (!targetRoutes.length) html += '<div class="empty-slot"><span>Sin rutas para mostrar.</span></div>';
     html += '</div></div>';
     return html;
   }
@@ -386,7 +366,7 @@ function renderConsulta() {
 }
 
 async function openRecordHistory(id) {
-  const [fecha, medio, ruta, slot] = id.split('|');
+  const [fecha, medio, ruta] = id.split('|');
   const rows = await Backend.fetchHistory(null, null);
   const own = rows.filter(r => r.recordId === id).sort((a, b) => b.ts.localeCompare(a.ts));
   const body = own.length
@@ -409,8 +389,8 @@ async function openRecordHistory(id) {
 let notifiedToday = false;
 function renderStatus() {
   const fecha = todayStr();
-  const slots = allSlotsForDate(fecha);
-  const pendientes = slots.filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta, s.slot)));
+  const rutas = allRoutesForDate(fecha);
+  const pendientes = rutas.filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta)));
 
   const banner = document.getElementById('pendingBanner');
   if (pendientes.length === 0) {
@@ -419,7 +399,7 @@ function renderStatus() {
   } else {
     const notifBtn = ('Notification' in window && Notification.permission === 'default')
       ? '<button class="btn small secondary" id="btnNotif" type="button">Avisarme en este navegador</button>' : '';
-    banner.innerHTML = '<div class="day-banner crit"><span>Faltan <strong>' + pendientes.length + '</strong> de ' + slots.length + ' valores de hoy para cerrar el día.</span>' +
+    banner.innerHTML = '<div class="day-banner crit"><span>Faltan <strong>' + pendientes.length + '</strong> de ' + rutas.length + ' valores de hoy para cerrar el día.</span>' +
       '<span style="display:flex; gap:8px;"><button class="btn small" id="gotoPending" type="button">Cargar hoy</button>' + notifBtn + '</span></div>';
     document.title = '⚠ Faltan ' + pendientes.length + ' · Pasajes SOSUNC';
     const btnNotif = document.getElementById('btnNotif');
@@ -430,10 +410,10 @@ function renderStatus() {
     maybeNotify(pendientes.length);
   }
 
-  const done = slots.length - pendientes.length;
+  const done = rutas.length - pendientes.length;
   const countPill = document.getElementById('countPill');
   countPill.hidden = false;
-  countPill.textContent = done + '/' + slots.length + ' de hoy cargados';
+  countPill.textContent = done + '/' + rutas.length + ' de hoy cargados';
 }
 function maybeNotify(n) {
   if (notifiedToday) return;
@@ -456,17 +436,16 @@ function empresaSelectHtml(medio, empresaActual) {
   for (const c of known) html += '<option value="' + escapeAttr(c) + '"' + (empresaActual === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
   html += '<option value="' + OTRA_VALUE + '"' + (isOtra ? ' selected' : '') + '>Otra…</option>';
   html += '</select>';
-  html += '<input class="cell-input empresa-otra" type="text" placeholder="Nombre de la empresa" value="' + (isOtra ? escapeAttr(empresaActual) : '') + '" style="display:' + (isOtra ? 'block' : 'none') + ';" />';
+  html += '<input class="cell-input empresa-otra" type="text" placeholder="Nombre de la empresa o &quot;Promedio&quot;" value="' + (isOtra ? escapeAttr(empresaActual) : '') + '" style="display:' + (isOtra ? 'block' : 'none') + ';" />';
   return html;
 }
-function manualRowHtml(fecha, medio, ruta, slot, slotInfo) {
-  const rec = findRecord(fecha, medio, ruta, slot) || { empresa: '', valor: '', fuente: { texto: '', url: '' }, tipo: '' };
+function manualRowHtml(fecha, medio, ruta) {
+  const rec = findRecord(fecha, medio, ruta) || { empresa: '', valor: '', fuente: { texto: '', url: '' }, tipo: '' };
   const tipoDefault = rec.tipo || 'manual';
-  const rid = recordId(fecha, medio, ruta, slot);
-  return '<tr data-rid="' + rid + '" data-medio="' + medio + '" data-ruta="' + ruta + '" data-categoria="' + escapeAttr(slotInfo.categoria) + '">' +
+  const rid = recordId(fecha, medio, ruta);
+  return '<tr data-rid="' + rid + '">' +
     '<td>' + medioLabel(medio) + '</td>' +
     '<td>' + escapeHtml(routeLabel(medio, ruta)) + '</td>' +
-    '<td title="' + escapeHtml(slotInfo.hint) + '">' + escapeHtml(slotInfo.categoria) + '</td>' +
     '<td>' + empresaSelectHtml(medio, rec.empresa) + '</td>' +
     '<td><input class="cell-input num-input valor-input" type="number" min="0" step="1" value="' + escapeAttr(rec.valor === '' || rec.valor == null ? '' : rec.valor) + '" placeholder="0" /></td>' +
     '<td><input class="cell-input fuente-input" type="text" value="' + escapeAttr((rec.fuente && rec.fuente.texto) || '') + '" placeholder="Sitio o fuente" /></td>' +
@@ -480,11 +459,11 @@ function renderManualTable() {
   const fecha = document.getElementById('mFecha').value || todayStr();
   const tbody = document.getElementById('manualTbody');
   let html = '';
-  for (const r of AIR_ROUTES) for (const s of AIR_SLOTS) html += manualRowHtml(fecha, 'aereo', r.code, s.n, s);
-  for (const r of BUS_ROUTES) for (const s of BUS_SLOTS) html += manualRowHtml(fecha, 'terrestre', r.code, s.n, s);
+  for (const r of AIR_ROUTES) html += manualRowHtml(fecha, 'aereo', r.code);
+  for (const r of BUS_ROUTES) html += manualRowHtml(fecha, 'terrestre', r.code);
   tbody.innerHTML = html;
   tbody.querySelectorAll('tr').forEach(tr => {
-    const rec = findRecord(...tr.dataset.rid.split('|').map((v, i) => (i === 3 ? Number(v) : v)));
+    const rec = findRecord(...tr.dataset.rid.split('|'));
     if (!recordValid(rec)) tr.classList.add('pending-row');
   });
   applyEditLock();
@@ -502,19 +481,17 @@ function wireManualTable() {
     if (e.target.dataset.action !== 'save-row') return;
     if (!canEdit) { toast('No tenés permisos de edición.'); return; }
     const tr = e.target.closest('tr');
-    const [fecha, medio, ruta, slotStr] = tr.dataset.rid.split('|');
-    const slot = Number(slotStr);
-    const categoria = tr.dataset.categoria;
+    const [fecha, medio, ruta] = tr.dataset.rid.split('|');
     const empresaSel = tr.querySelector('.empresa-select').value;
     const empresa = empresaSel === OTRA_VALUE ? tr.querySelector('.empresa-otra').value.trim() : empresaSel;
     const valorRaw = tr.querySelector('.valor-input').value;
     const fuenteTexto = tr.querySelector('.fuente-input').value.trim();
     const tipo = tr.querySelector('.tipo-input').value;
     if (!empresa || valorRaw === '') { toast('Elegí la empresa y completá el valor antes de guardar.'); return; }
-    const id = recordId(fecha, medio, ruta, slot);
-    const before = findRecord(fecha, medio, ruta, slot) || null;
+    const id = recordId(fecha, medio, ruta);
+    const before = findRecord(fecha, medio, ruta) || null;
     const after = {
-      fecha, medio, ruta, slot, empresa, categoria, valor: Number(valorRaw),
+      fecha, medio, ruta, empresa, valor: Number(valorRaw),
       fuente: { texto: fuenteTexto, url: /^https?:\/\//.test(fuenteTexto) ? fuenteTexto : null },
       tipo, updatedAt: new Date().toISOString(), updatedBy: currentUser.email, updatedByName: currentUser.displayName
     };
@@ -584,8 +561,8 @@ async function exportCsv() {
   const ruta = document.getElementById('hRuta').value;
   const rows = recordsInRange(desde, hasta, medio, ruta);
   if (!rows.length) { toast('No hay registros para exportar en ese rango.'); return; }
-  const header = ['Fecha', 'Medio', 'Ruta', 'Empresa', 'Categoría', 'Valor ARS por pasajero', 'Fuente', 'URL fuente', 'Estado'];
-  const data = rows.map(r => [r.fecha, medioLabel(r.medio), routeLabel(r.medio, r.ruta), r.empresa, r.categoria || '', r.valor, (r.fuente && r.fuente.texto) || '', (r.fuente && r.fuente.url) || '', r.tipo || '']);
+  const header = ['Fecha', 'Medio', 'Ruta', 'Empresa', 'Valor ARS por pasajero', 'Fuente', 'URL fuente', 'Estado'];
+  const data = rows.map(r => [r.fecha, medioLabel(r.medio), routeLabel(r.medio, r.ruta), r.empresa, r.valor, (r.fuente && r.fuente.texto) || '', (r.fuente && r.fuente.url) || '', r.tipo || '']);
   downloadCsvRows('pasajes_sosunc_' + desde + '_a_' + hasta + '.csv', header, data);
 }
 async function generarCompletitud() {
@@ -595,7 +572,7 @@ async function generarCompletitud() {
   if (desde > hasta) { toast('El rango de fechas no es válido.'); return; }
   const missing = []; let cursor = desde; let guard = 0;
   while (cursor <= hasta && guard < 400) {
-    for (const s of allSlotsForDate(cursor)) if (!recordValid(findRecord(s.fecha, s.medio, s.ruta, s.slot))) missing.push(s);
+    for (const s of allRoutesForDate(cursor)) if (!recordValid(findRecord(s.fecha, s.medio, s.ruta))) missing.push(s);
     cursor = addDaysStr(cursor, 1); guard++;
   }
   if (!missing.length) { toast('Sin pendientes: todos los días del rango están completos.'); return; }
@@ -614,24 +591,22 @@ function parseImportFile(text) {
   const items = []; const errors = [];
   body.forEach((cols, i) => {
     const lineNo = i + 2;
-    const [fechaRaw, medioLbl, rutaLbl, empresa, categoria, valorRaw] = cols;
-    const fuenteTexto = cols[6] || ''; const fuenteUrl = cols[7] || ''; const estadoLbl = cols[8] || '';
+    const [fechaRaw, medioLbl, rutaLbl, empresa, valorRaw] = cols;
+    const fuenteTexto = cols[5] || ''; const fuenteUrl = cols[6] || ''; const estadoLbl = cols[7] || '';
     if (!fechaRaw || !/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw.trim())) { errors.push('Fila ' + lineNo + ': fecha inválida ("' + fechaRaw + '").'); return; }
     const medio = MEDIO_FROM_LABEL[(medioLbl || '').trim()];
     if (!medio) { errors.push('Fila ' + lineNo + ': medio desconocido ("' + medioLbl + '").'); return; }
     const route = routesFor(medio).find(r => r.label === (rutaLbl || '').trim());
     if (!route) { errors.push('Fila ' + lineNo + ': ruta desconocida ("' + rutaLbl + '") para ' + medioLbl + '.'); return; }
-    const slotInfo = slotsFor(medio).find(s => s.categoria.toLowerCase() === (categoria || '').trim().toLowerCase());
-    if (!slotInfo) { errors.push('Fila ' + lineNo + ': categoría desconocida ("' + categoria + '") para ' + medioLbl + '.'); return; }
     if (!empresa || !empresa.trim()) { errors.push('Fila ' + lineNo + ': falta la empresa.'); return; }
     const valor = Number(String(valorRaw).replace(',', '.'));
     if (!Number.isFinite(valor) || valor < 0) { errors.push('Fila ' + lineNo + ': valor inválido ("' + valorRaw + '").'); return; }
     const tipo = TIPO_FROM_LABEL[(estadoLbl || '').trim()] || 'manual';
     const fecha = fechaRaw.trim();
-    const id = recordId(fecha, medio, route.code, slotInfo.n);
-    const before = findRecord(fecha, medio, route.code, slotInfo.n) || null;
+    const id = recordId(fecha, medio, route.code);
+    const before = findRecord(fecha, medio, route.code) || null;
     const after = {
-      fecha, medio, ruta: route.code, slot: slotInfo.n, empresa: empresa.trim(), categoria: slotInfo.categoria,
+      fecha, medio, ruta: route.code, empresa: empresa.trim(),
       valor, fuente: { texto: fuenteTexto.trim(), url: fuenteUrl.trim() || null }, tipo,
       updatedAt: new Date().toISOString(), updatedBy: currentUser.email, updatedByName: currentUser.displayName
     };
@@ -689,7 +664,7 @@ async function renderAudit() {
     '<td>' + escapeHtml(h.userName || h.userEmail) + '</td>' +
     '<td>' + accionLabel(h.accion) + '</td>' +
     '<td>' + escapeHtml(fmtDateLong(h.fecha)) + '</td>' +
-    '<td>' + escapeHtml(routeLabel(h.medio, h.ruta)) + ' · ' + escapeHtml(h.categoria || '') + '</td>' +
+    '<td>' + escapeHtml(medioLabel(h.medio)) + ' · ' + escapeHtml(routeLabel(h.medio, h.ruta)) + '</td>' +
     '<td>' + escapeHtml(h.cambios || '') + '</td>' +
     '</tr>').join('');
   renderAudit._last = rows;
@@ -699,8 +674,8 @@ async function exportAudit() {
   const hasta = document.getElementById('auHasta').value;
   const rows = renderAudit._last || await Backend.fetchHistory(desde || null, hasta || null);
   if (!rows.length) { toast('No hay cambios para exportar en ese rango.'); return; }
-  const header = ['Cuándo', 'Quién', 'Acción', 'Fecha de viaje', 'Medio', 'Ruta', 'Categoría', 'Qué cambió'];
-  const data = rows.map(h => [fmtDateTime(h.ts), h.userName || h.userEmail, accionLabel(h.accion), h.fecha, medioLabel(h.medio), routeLabel(h.medio, h.ruta), h.categoria || '', h.cambios || '']);
+  const header = ['Cuándo', 'Quién', 'Acción', 'Fecha de viaje', 'Medio', 'Ruta', 'Qué cambió'];
+  const data = rows.map(h => [fmtDateTime(h.ts), h.userName || h.userEmail, accionLabel(h.accion), h.fecha, medioLabel(h.medio), routeLabel(h.medio, h.ruta), h.cambios || '']);
   downloadCsvRows('historial_cambios_sosunc_' + (desde || 'inicio') + '_a_' + (hasta || 'hoy') + '.csv', header, data);
 }
 
@@ -711,21 +686,20 @@ async function generarComprobante() {
   const fecha = document.getElementById('cFecha').value;
   const medio = document.getElementById('cMedio').value;
   const ruta = document.getElementById('cRuta').value;
-  const slot = Number(document.getElementById('cCategoria').value);
-  if (!fecha || !ruta || !slot) { toast('Elegí fecha, ruta y categoría para el comprobante.'); return; }
-  const rec = findRecord(fecha, medio, ruta, slot);
+  if (!fecha || !ruta) { toast('Elegí fecha y ruta para el comprobante.'); return; }
+  const rec = findRecord(fecha, medio, ruta);
   if (!recordValid(rec)) { toast('No hay valor cargado para esa fecha y ruta. Cargalo en la carga manual antes de generar el comprobante.'); return; }
   const emitido = new Date().toLocaleString('es-AR');
   const tipoMap = { automatico: 'Automático', estimado: 'Estimado', manual: 'Manual' };
   const org = 'SOSUNC · Reintegros (Dirección Social)';
   const lineas = [
     ['Fecha de viaje', fmtDateLong(fecha)], ['Medio', medioLabel(medio)], ['Ruta', routeLabel(medio, ruta)],
-    ['Empresa', rec.empresa], ['Categoría', rec.categoria || '—'], ['Valor por pasajero (ARS)', fmtARS(rec.valor)],
+    ['Empresa', rec.empresa], ['Valor por pasajero (ARS)', fmtARS(rec.valor)],
     ['Fuente', ((rec.fuente && rec.fuente.texto) || '—') + ((rec.fuente && rec.fuente.url) ? ' — ' + rec.fuente.url : '')],
     ['Estado del dato', tipoMap[rec.tipo] || rec.tipo || '—']
   ];
   const foot = 'Este comprobante documenta el valor de referencia relevado por Reintegros (Dirección Social) de SOSUNC para el cálculo de reintegros por derivación, correspondiente a la fecha de viaje indicada. Emitido el ' + emitido + '.';
-  const filenameBase = 'comprobante_sosunc_' + fecha + '_' + medio + '_' + ruta + '_' + rec.categoria.replace(/\s+/g, '');
+  const filenameBase = 'comprobante_sosunc_' + fecha + '_' + medio + '_' + ruta;
 
   if (window.jspdf && window.jspdf.jsPDF) {
     try {
@@ -912,7 +886,6 @@ function init() {
 
   document.getElementById('cFecha').value = today; document.getElementById('cFecha').max = today;
   populateSelect(document.getElementById('cRuta'), routesFor('aereo'), false);
-  populateCategoriaSelect(document.getElementById('cCategoria'), 'aereo');
   document.getElementById('rcDesde').value = d30.toISOString().slice(0, 10);
   document.getElementById('rcHasta').value = today;
 
@@ -929,7 +902,6 @@ function init() {
   document.getElementById('cMedio').addEventListener('change', () => {
     const m = document.getElementById('cMedio').value;
     populateSelect(document.getElementById('cRuta'), routesFor(m), false);
-    populateCategoriaSelect(document.getElementById('cCategoria'), m);
   });
   document.getElementById('btnComprobante').addEventListener('click', generarComprobante);
   document.getElementById('btnCompletitud').addEventListener('click', generarCompletitud);

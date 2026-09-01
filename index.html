@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Pasajes de Referencia SOSUNC</title>
-<meta name="description" content="Relevamiento diario de pasajes aéreos (Turista y Ejecutiva) y terrestres (Semicama y Cama Ejecutivo) a CABA, para el cálculo de reintegros por derivación." />
+<meta name="description" content="Relevamiento diario de valores de referencia de pasajes aéreos y terrestres a CABA, para el cálculo de reintegros por derivación." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -120,7 +120,6 @@
   .fare-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface-2); }
   .fare-card .who2 { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .fare-card .empresa { font-weight: 500; font-size: 14px; }
-  .fare-card .categoria { font-size: 12px; color: var(--ink-muted); }
   .fare-card .fuente { font-size: 12px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 32ch; }
   .fare-card .right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
   .fare-card .valor { font-size: 16px; font-weight: 600; }
@@ -250,7 +249,7 @@
     <div class="block-head">
       <div>
         <h2>Consultar un valor</h2>
-        <p class="hint">Fecha de viaje y ruta → valor por pasajero de cada categoría, con empresa y fuente. Como el reintegro se liquida después del viaje, la fecha suele ser anterior a hoy.</p>
+        <p class="hint">Fecha de viaje y ruta → valor de referencia por pasajero, con empresa y fuente. Como el reintegro se liquida después del viaje, la fecha suele ser anterior a hoy.</p>
       </div>
     </div>
     <div class="card">
@@ -270,7 +269,7 @@
 
   <section class="view-panel" data-view="reporte-comprobante" hidden>
     <div class="block-head"><div><h2>Comprobante para un expediente</h2>
-      <p class="hint">Constancia de una fecha, ruta y categoría puntual, para adjuntar a un expediente de reintegro.</p>
+      <p class="hint">Constancia de una fecha y ruta puntual, para adjuntar a un expediente de reintegro.</p>
     </div></div>
     <div class="card report-card">
       <div class="field-row">
@@ -288,10 +287,6 @@
         <div class="field">
           <label for="cRuta">Ruta</label>
           <select id="cRuta"></select>
-        </div>
-        <div class="field">
-          <label for="cCategoria">Categoría</label>
-          <select id="cCategoria"></select>
         </div>
       </div>
       <div style="margin-top:12px;"><button class="btn secondary" id="btnComprobante" type="button">Generar comprobante (PDF)</button></div>
@@ -384,7 +379,7 @@
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table>
-          <thead><tr><th>Cuándo</th><th>Quién</th><th>Acción</th><th>Fecha de viaje</th><th>Ruta / Categoría</th><th>Qué cambió</th></tr></thead>
+          <thead><tr><th>Cuándo</th><th>Quién</th><th>Acción</th><th>Fecha de viaje</th><th>Medio / Ruta</th><th>Qué cambió</th></tr></thead>
           <tbody id="auditTbody"><tr><td colspan="6" class="hint" style="padding:14px 8px;">Elegí un rango y tocá "Ver cambios".</td></tr></tbody>
         </table>
       </div>
@@ -395,7 +390,7 @@
     <div class="block-head"><div><h2>Carga y corrección manual</h2></div></div>
     <div class="card">
       <div id="pendingBanner"></div>
-      <p class="hint" style="margin:0 0 12px;">Una fila por categoría. Podés cargar cualquier fecha, incluidas anteriores. Lo que edites a mano queda marcado como <strong>Manual</strong>, con tu usuario y la hora.</p>
+      <p class="hint" style="margin:0 0 12px;">Una fila por ruta. Podés cargar cualquier fecha, incluidas anteriores. Lo que edites a mano queda marcado como <strong>Manual</strong>, con tu usuario y la hora.</p>
       <div class="field-row" style="margin-bottom:12px;">
         <div class="field">
           <label for="mFecha">Fecha a cargar</label>
@@ -405,7 +400,7 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Medio</th><th>Ruta</th><th>Categoría</th><th>Empresa</th><th>Valor (ARS, por pasajero)</th><th>Fuente</th><th>Estado</th><th></th></tr>
+            <tr><th>Medio</th><th>Ruta</th><th>Empresa</th><th>Valor (ARS, por pasajero)</th><th>Fuente</th><th>Estado</th><th></th></tr>
           </thead>
           <tbody id="manualTbody"></tbody>
         </table>
@@ -429,7 +424,7 @@
   </section>
 
   <footer class="note">
-    Valores relevados por día hábil, ida solamente, en Turista/Ejecutiva (aéreo) y Semicama/Cama Ejecutivo (terrestre) — base de referencia para reintegros por derivación. Última actualización: <span id="footUpdated"></span>.
+    Valores relevados por día hábil, ida solamente — aéreo: tarifa más económica; terrestre: promedio de los servicios disponibles. Base de referencia para reintegros por derivación. Última actualización: <span id="footUpdated"></span>.
   </footer>
   </div>
 </div>
