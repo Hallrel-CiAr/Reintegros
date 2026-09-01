@@ -72,7 +72,14 @@ Compartí ese link como haces hoy con cualquier archivo.
 - **Importar CSV**: para restaurar un respaldo (el mismo formato que exporta "Historial y exportación"), por ejemplo si hace falta un cambio grande de estructura como el que ya pasó una vez con las categorías.
 - **Ya no se borran solos los registros viejos** a los 6 meses. Antes se hacía porque toda la base de datos vivía dentro del propio archivo HTML y había que cuidar el tamaño; ahora vive en Firestore, así que se conserva todo salvo que decidan borrar algo a propósito.
 
-## Lo que sigue igual que antes (decisiones que ya tomamos)
+## Búsqueda diaria automática (en camino)
 
-- **La búsqueda diaria de tarifas** (Kayak / Plataforma 10) la sigo disparando yo cuando me la pidan por este chat — no corre sola en ningún servidor.
-- **Los avisos de "faltan datos de hoy"** son dentro de la página (el título de la pestaña cambia, y hay un botón para activar notificaciones del navegador) mientras la tengas abierta. No hay avisos por correo ni notificaciones push reales, porque eso requiere un servidor propio corriendo todo el tiempo, y elegiste no sumar esa complejidad por ahora.
+La idea acordada: todos los días se busca en **Plataforma 10** (terrestre, se guarda el promedio de los servicios disponibles) y **Google Flights** (aéreo, se guarda la tarifa más económica), y se completa solo lo que esté vacío — nunca pisa un valor ya cargado. Si un día falla, queda pendiente para forzarlo ese mismo día o cargarlo a mano, como siempre.
+
+Para poder armar esto hace falta, en este orden:
+1. **Este instructivo completo** (pasos 1 a 7) — sin Firestore real no hay dónde guardar lo que la búsqueda encuentre.
+2. **Una cuenta "robot"** en Authentication → Email/contraseña (no con Gmail), agregada como una editora más desde "Gestionar accesos", para que la tarea automática pueda cargar valores sin que nadie tenga que hacer clic. Se coordina con Claude una vez completado el paso 1.
+
+## Avisos de "faltan datos de hoy"
+
+Son dentro de la página (el título de la pestaña cambia, y hay un botón para activar notificaciones del navegador) mientras la tengas abierta. No hay avisos por correo, porque eso requiere un servidor propio corriendo todo el tiempo.
