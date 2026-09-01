@@ -24,6 +24,7 @@ Podés abrir `index.html` directamente en el navegador (doble clic) tal cual est
 1. En el menú lateral: **Compilación → Authentication** → "Comenzar".
 2. Pestaña "Sign-in method" → habilitá el proveedor **Google**.
 3. Elegí un email de soporte del proyecto (te va a pedir uno; podés usar el mismo `matiasldg@gmail.com`).
+4. Pestaña **Settings** (Configuración) → **Authorized domains** (Dominios autorizados) → "Add domain" → agregá el dominio exacto donde vaya a vivir la página (por ejemplo `hallrel-ciar.github.io` si la usás con GitHub Pages, o el dominio de NextCloud). Sin este paso, el login falla con el error `auth/unauthorized-domain`. No hace falta poner la ruta completa, solo el dominio.
 
 ### 3. Crear la base de datos (Firestore)
 
