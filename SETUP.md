@@ -73,13 +73,33 @@ Compartí ese link como haces hoy con cualquier archivo.
 - **Importar CSV**: para restaurar un respaldo (el mismo formato que exporta "Historial y exportación"), por ejemplo si hace falta un cambio grande de estructura como el que ya pasó una vez con las categorías.
 - **Ya no se borran solos los registros viejos** a los 6 meses. Antes se hacía porque toda la base de datos vivía dentro del propio archivo HTML y había que cuidar el tamaño; ahora vive en Firestore, así que se conserva todo salvo que decidan borrar algo a propósito.
 
-## Búsqueda diaria automática (en camino)
+## Búsqueda diaria automática
 
-La idea acordada: todos los días se busca en **Plataforma 10** (terrestre, se guarda el promedio de los servicios disponibles) y **Google Flights** (aéreo, se guarda la tarifa más económica), y se completa solo lo que esté vacío — nunca pisa un valor ya cargado. Si un día falla, queda pendiente para forzarlo ese mismo día o cargarlo a mano, como siempre.
+Todos los días (y de nuevo cada 2 horas, para que "Forzar actualización automática" tenga efecto el mismo día) se busca en **Plataforma 10** (terrestre, se guarda el promedio de los servicios disponibles) y **Google Flights** (aéreo, se guarda la tarifa más económica), y se completa solo lo que esté vacío — nunca pisa un valor ya cargado.
 
-Para poder armar esto hace falta, en este orden:
-1. **Este instructivo completo** (pasos 1 a 7) — sin Firestore real no hay dónde guardar lo que la búsqueda encuentre.
-2. **Una cuenta "robot"** en Authentication → Email/contraseña (no con Gmail), agregada como una editora más desde "Gestionar accesos", para que la tarea automática pueda cargar valores sin que nadie tenga que hacer clic. Se coordina con Claude una vez completado el paso 1.
+Corre como una **GitHub Action** (pestaña "Actions" del repositorio), no dentro de Claude, porque el entorno de Claude no tiene salida a esos sitios. El código está en `scripts/actualizar_automatico.js`.
+
+### 8. Agregar la cuenta robot como editora
+
+1. Entrá a la página con `matiasldg@gmail.com` → sección **"Accesos"** (en el menú "Accesos", solo la ves vos)
+2. Agregá el email de la cuenta que creaste en Firebase Authentication (Email/contraseña) — por ejemplo `automatizacion@pasajes-sosunc.app`
+
+### 9. Cargar los secretos en GitHub Actions
+
+1. En el repositorio: **Settings → Secrets and variables → Actions → New repository secret**
+2. Cargá estos 4, uno por uno (nombre exacto a la izquierda, valor a la derecha):
+   - `FIREBASE_API_KEY` → el mismo valor de `apiKey` que está en `firebase-config.js`
+   - `FIREBASE_PROJECT_ID` → el mismo valor de `projectId` que está en `firebase-config.js`
+   - `ROBOT_EMAIL` → el email de la cuenta robot que creaste (paso 8)
+   - `ROBOT_PASSWORD` → la contraseña de esa cuenta
+
+Estos 4 secretos no se muestran ni se guardan en el código — solo GitHub Actions los usa al correr la tarea.
+
+### 10. Probarlo
+
+En la pestaña **Actions** del repositorio → "Actualización automática de pasajes" → **"Run workflow"** (no hace falta esperar al horario programado). Mirá el log de la corrida: te muestra ruta por ruta si encontró un valor, lo guardó, o no pudo confirmarlo.
+
+Como esto no se pudo probar contra los sitios reales antes de publicarlo (ver nota en `scripts/actualizar_automatico.js`), esta primera corrida real es la que confirma si funciona. Si algo falla, copiá el log y compartilo para ajustarlo.
 
 ## Avisos de "faltan datos de hoy"
 
