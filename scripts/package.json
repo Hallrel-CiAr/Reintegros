@@ -1,0 +1,10 @@
+{
+  "name": "actualizacion-automatica-sosunc",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Búsqueda diaria automática de valores de referencia para Pasajes SOSUNC (Plataforma 10 / Google Flights) y escritura en Firestore.",
+  "main": "actualizar_automatico.js",
+  "dependencies": {
+    "playwright": "1.47.0"
+  }
+}

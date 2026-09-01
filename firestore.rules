@@ -43,5 +43,15 @@ service cloud.firestore {
       allow create: if isOwner() || isEditor();
       allow update, delete: if false;
     }
+
+    // Pedidos de "Forzar actualización automática" desde la página. La
+    // cuenta robot de la búsqueda diaria (agregada como editora más) los lee
+    // y los marca resueltos; no puede borrarlos.
+    match /solicitudes/{solicitudId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner() || isEditor();
+      allow update: if isOwner() || isEditor();
+      allow delete: if false;
+    }
   }
 }

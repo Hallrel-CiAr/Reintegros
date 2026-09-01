@@ -129,7 +129,8 @@ const LS_KEYS = {
   records: 'sosunc_demo_records',
   historial: 'sosunc_demo_historial',
   editors: 'sosunc_demo_editors',
-  user: 'sosunc_demo_user'
+  user: 'sosunc_demo_user',
+  solicitudes: 'sosunc_demo_solicitudes'
 };
 function lsGet(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } }
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* almacenamiento no disponible */ } }
@@ -192,6 +193,11 @@ const DemoBackend = {
     const list = lsGet(LS_KEYS.editors, []).filter(e => e !== email);
     lsSet(LS_KEYS.editors, list);
     this._cb.onEditorsChange(list);
+  },
+  async requestAutoUpdate(fecha, user) {
+    const list = lsGet(LS_KEYS.solicitudes, []);
+    list.unshift({ fecha, estado: 'pendiente', requestedBy: user.email, requestedByName: user.displayName || user.email, requestedAt: new Date().toISOString() });
+    lsSet(LS_KEYS.solicitudes, list);
   }
 };
 
@@ -280,6 +286,12 @@ const RealBackend = {
       const doc = await tx.get(ref);
       const emails = ((doc.exists && doc.data().emails) || []).filter(e => e !== email);
       tx.set(ref, { emails });
+    });
+  },
+  async requestAutoUpdate(fecha, user) {
+    await this._db.collection('solicitudes').add({
+      fecha, estado: 'pendiente', requestedBy: user.email,
+      requestedByName: user.displayName || user.email, requestedAt: new Date().toISOString()
     });
   }
 };
@@ -405,13 +417,15 @@ function renderStatus() {
     const notifBtn = ('Notification' in window && Notification.permission === 'default')
       ? '<button class="btn small secondary" id="btnNotif" type="button">Avisarme en este navegador</button>' : '';
     banner.innerHTML = '<div class="day-banner crit"><span>Faltan <strong>' + pendientes.length + '</strong> de ' + rutas.length + ' valores de hoy para cerrar el día.</span>' +
-      '<span style="display:flex; gap:8px;"><button class="btn small" id="gotoPending" type="button">Cargar hoy</button>' + notifBtn + '</span></div>';
+      '<span style="display:flex; gap:8px; flex-wrap:wrap;"><button class="btn small" id="gotoPending" type="button">Cargar hoy</button>' +
+      '<button class="btn small secondary" id="btnForzarAuto" type="button">Forzar actualización automática</button>' + notifBtn + '</span></div>';
     document.title = '⚠ Faltan ' + pendientes.length + ' · Pasajes SOSUNC';
     const btnNotif = document.getElementById('btnNotif');
     if (btnNotif) btnNotif.addEventListener('click', async () => {
       const perm = await Notification.requestPermission();
       if (perm === 'granted') { toast('Avisos activados en este navegador.'); new Notification('Pasajes SOSUNC', { body: 'Vas a recibir un aviso acá si quedan valores del día sin cargar.' }); }
     });
+    document.getElementById('btnForzarAuto').addEventListener('click', forzarActualizacion);
     maybeNotify(pendientes.length);
   }
 
@@ -427,6 +441,15 @@ function maybeNotify(n) {
   if (hour < 15) return;
   notifiedToday = true;
   try { new Notification('Pasajes SOSUNC', { body: 'Todavía faltan ' + n + ' valores de hoy por cargar.' }); } catch { /* ignorado */ }
+}
+async function forzarActualizacion() {
+  if (!canEdit) { toast('No tenés permisos para pedir la actualización.'); return; }
+  try {
+    await Backend.requestAutoUpdate(todayStr(), currentUser);
+    toast('Pedido registrado. El proceso automático lo toma en su próxima corrida (dentro de las próximas 2 horas).');
+  } catch (err) {
+    toast('No se pudo registrar el pedido: ' + (err && err.message ? err.message : 'error'));
+  }
 }
 
 /* ============================================================

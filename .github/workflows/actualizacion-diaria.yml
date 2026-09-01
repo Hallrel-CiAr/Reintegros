@@ -1,0 +1,36 @@
+name: Actualización automática de pasajes
+
+on:
+  schedule:
+    # Cada 2 horas: cubre la carga diaria y hace que "Forzar actualización"
+    # desde la página tenga efecto el mismo día (no solo una vez a las 11:00 UTC).
+    - cron: '0 */2 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        working-directory: scripts
+        run: npm install
+
+      - name: Instalar navegador (Chromium)
+        working-directory: scripts
+        run: npx playwright install --with-deps chromium
+
+      - name: Ejecutar actualización
+        working-directory: scripts
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ROBOT_EMAIL: ${{ secrets.ROBOT_EMAIL }}
+          ROBOT_PASSWORD: ${{ secrets.ROBOT_PASSWORD }}
+        run: node actualizar_automatico.js
