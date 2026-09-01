@@ -14,12 +14,12 @@
 // no ocultar este archivo.
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyD2oI0gl63Jh2EtaefHRVsSg2xCVhGnvXo",
+  authDomain: "pasajes-sosunc.firebaseapp.com",
+  projectId: "pasajes-sosunc",
+  storageBucket: "pasajes-sosunc.firebasestorage.app",
+  messagingSenderId: "281600044729",
+  appId: "1:281600044729:web:f7036f504cc0ce04b57568"
 };
 
 // Email de la persona dueña del sistema: es la única que puede administrar
