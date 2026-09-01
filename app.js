@@ -208,12 +208,17 @@ const RealBackend = {
   _cb: null, _db: null, _auth: null, _unsubRecords: null, _unsubEditors: null,
   async init(cb) {
     this._cb = cb;
-    await loadScript('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
-    await loadScript('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js');
-    await loadScript('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js');
-    firebase.initializeApp(firebaseConfig);
-    this._auth = firebase.auth();
-    this._db = firebase.firestore();
+    try {
+      await loadScript('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js');
+      firebase.initializeApp(firebaseConfig);
+      this._auth = firebase.auth();
+      this._db = firebase.firestore();
+    } catch (err) {
+      cb.onInitError && cb.onInitError(err);
+      return;
+    }
     this._auth.onAuthStateChanged(user => {
       if (this._unsubRecords) { this._unsubRecords(); this._unsubRecords = null; }
       if (this._unsubEditors) { this._unsubEditors(); this._unsubEditors = null; }
@@ -922,8 +927,25 @@ function init() {
     try { await Backend.signIn(); } catch (err) { toast('No se pudo iniciar sesión: ' + (err && err.message ? err.message : 'error')); }
   });
   if (!FIREBASE_READY) renderDemoSignInBox();
+  document.getElementById('btnRetryInit').addEventListener('click', () => location.reload());
 
-  Backend.init({ onAuthChange, onRecordsChange, onEditorsChange, onError: err => toast('Error: ' + (err && err.message ? err.message : 'desconocido')) });
+  startBackend();
+}
+
+function startBackend() {
+  document.getElementById('gate').hidden = false;
+  document.getElementById('gateError').hidden = true;
+  authReady = false; updateEditPill();
+  Backend.init({
+    onAuthChange, onRecordsChange, onEditorsChange,
+    onError: err => toast('Error: ' + (err && err.message ? err.message : 'desconocido')),
+    onInitError: () => {
+      authReady = true; updateEditPill();
+      document.getElementById('gate').hidden = false;
+      document.getElementById('appBody').hidden = true;
+      document.getElementById('gateError').hidden = false;
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -240,6 +240,10 @@
       <p>Se pide identificarte para que cada carga y cada cambio quede registrado a nombre de quien lo hizo.</p>
       <button class="btn" id="btnSignIn" type="button">Iniciar sesión con Google</button>
       <div id="demoSignInBox" hidden style="margin-top:14px; display:flex; flex-direction:column; gap:8px;"></div>
+      <div id="gateError" hidden style="margin-top:14px;">
+        <p class="hint" style="color:var(--crit);">No se pudo conectar con el sistema de inicio de sesión. Revisá tu conexión (o desactivá algún bloqueador de anuncios/rastreadores para este sitio) y probá de nuevo.</p>
+        <button class="btn secondary small" id="btnRetryInit" type="button">Reintentar</button>
+      </div>
     </div>
   </div>
 
