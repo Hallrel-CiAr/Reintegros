@@ -34,3 +34,12 @@ jobs:
           ROBOT_EMAIL: ${{ secrets.ROBOT_EMAIL }}
           ROBOT_PASSWORD: ${{ secrets.ROBOT_PASSWORD }}
         run: node actualizar_automatico.js
+
+      - name: Subir capturas de depuración
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: scripts/debug
+          if-no-files-found: ignore
+          retention-days: 7

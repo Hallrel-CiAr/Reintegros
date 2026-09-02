@@ -22,6 +22,23 @@
  * ROBOT_EMAIL, ROBOT_PASSWORD.
  */
 const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
+
+const DEBUG_DIR = 'debug';
+fs.mkdirSync(DEBUG_DIR, { recursive: true });
+async function capturarDebug(page, nombre) {
+  try { await page.screenshot({ path: path.join(DEBUG_DIR, nombre + '.png'), fullPage: true }); } catch { /* no bloquea el proceso principal */ }
+}
+async function cerrarBannerCookies(page) {
+  const textos = [/aceptar/i, /entendido/i, /de acuerdo/i, /accept/i];
+  for (const t of textos) {
+    try {
+      const btn = page.getByRole('button', { name: t }).first();
+      if (await btn.isVisible({ timeout: 1500 })) { await btn.click({ timeout: 1500 }); return; }
+    } catch { /* no había banner con ese texto */ }
+  }
+}
 
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
@@ -161,6 +178,7 @@ async function buscarAereo(page, ciudad, fechaISO) {
   const q = `vuelos de ${ciudad} a Buenos Aires el ${fechaLegible} solo ida`;
   const url = 'https://www.google.com/travel/flights?gl=AR&hl=es-419&curr=ARS&q=' + encodeURIComponent(q);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await cerrarBannerCookies(page);
   await page.waitForTimeout(5000);
   const bodyText = await page.locator('body').innerText().catch(() => '');
   const matches = [...bodyText.matchAll(/ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g)];
@@ -168,6 +186,8 @@ async function buscarAereo(page, ciudad, fechaISO) {
     .map(mm => ({ valor: Number(mm[0].replace(/[^\d]/g, '')), index: mm.index }))
     .filter(p => Number.isFinite(p.valor) && p.valor > 1000);
   if (!precios.length) return null;
+  const ordenados = precios.map(p => p.valor).sort((a, b) => a - b);
+  console.log('  Precios detectados (primeros 8): ' + ordenados.slice(0, 8).join(', '));
   const min = precios.reduce((a, b) => (b.valor < a.valor ? b : a));
   const ventana = bodyText.slice(Math.max(0, min.index - 250), min.index);
   const aerolinea = inferAirline(ventana) || 'Tarifa más económica (ver fuente)';
@@ -178,7 +198,9 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
   const fechaDDMMYYYY = `${d}-${m}-${y}`;
   await page.goto('https://www.plataforma10.com.ar/', { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await cerrarBannerCookies(page);
   await page.waitForTimeout(1500);
+  console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
   try {
     const origenInput = page.getByPlaceholder(/Origen/i).first();
     await origenInput.click();
@@ -208,6 +230,7 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
     .map(s => Number(s.replace(/[^\d]/g, '')))
     .filter(n => Number.isFinite(n) && n > 1000);
   if (!precios.length) return null;
+  console.log('  Precios detectados: ' + precios.join(', '));
   const promedio = Math.round(precios.reduce((a, b) => a + b, 0) / precios.length);
   return {
     valor: promedio,
@@ -237,6 +260,7 @@ async function procesarFecha(idToken, browser, fecha) {
     } catch (err) {
       console.log('  Error buscando: ' + err.message);
     }
+    await capturarDebug(page, `${fecha}_${r.medio}_${r.code}${resultado ? '' : '_SIN-RESULTADO'}`);
     if (!resultado) { console.log('  No se pudo confirmar un valor con la fuente. Queda pendiente.'); continue; }
 
     const nowIso = new Date().toISOString();
