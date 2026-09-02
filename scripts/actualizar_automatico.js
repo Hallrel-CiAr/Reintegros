@@ -250,8 +250,11 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
     const fechaInput = page.getByPlaceholder('Fecha partida');
     await fechaInput.click();
     await page.waitForTimeout(1000);
+    // Se busca por el texto real del botón, no por su "nombre accesible"
+    // (que puede incluir la fecha completa en un aria-label y no matchear
+    // por nombre exacto aunque el texto visible sea solo el número).
     const diaTexto = String(Number(d));
-    await page.getByRole('button', { name: diaTexto, exact: true }).first().click();
+    await page.locator('button', { hasText: new RegExp('^' + diaTexto + '$') }).first().click();
     await page.waitForTimeout(800);
     const aplicar = page.getByRole('button', { name: /aplicar|confirmar/i }).first();
     if (await aplicar.count().catch(() => 0)) await aplicar.click().catch(() => {});
