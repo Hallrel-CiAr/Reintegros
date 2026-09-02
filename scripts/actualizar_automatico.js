@@ -172,14 +172,37 @@ function inferAirline(text) {
   return null;
 }
 
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+// Google Flights arranca en modo "Ida y vuelta" salvo que se lo cambie a mano
+// en la página; pedirlo en el texto de búsqueda (q=) no alcanza siempre.
+// Si lo detecta, lo cambia a "Solo ida" y espera a que los resultados se
+// actualicen antes de leer precios.
+async function forzarSoloIda(page) {
+  try {
+    const boton = page.getByText('Ida y vuelta', { exact: true }).first();
+    if (await boton.isVisible({ timeout: 4000 })) {
+      await boton.click();
+      await page.getByText('Solo ida', { exact: true }).first().click({ timeout: 4000 });
+      await page.waitForTimeout(2500);
+      console.log('  Cambiado a "Solo ida".');
+      return true;
+    }
+  } catch {
+    console.log('  Ya estaba en "Solo ida" o no se encontró ese selector.');
+  }
+  return false;
+}
+
 async function buscarAereo(page, ciudad, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
-  const fechaLegible = `${d}/${m}/${y}`;
-  const q = `vuelos de ${ciudad} a Buenos Aires el ${fechaLegible} solo ida`;
+  const fechaLegible = `${Number(d)} de ${MESES[Number(m) - 1]} de ${y}`;
+  const q = `vuelos solo ida de ${ciudad} a Buenos Aires el ${fechaLegible}`;
   const url = 'https://www.google.com/travel/flights?gl=AR&hl=es-419&curr=ARS&q=' + encodeURIComponent(q);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await cerrarBannerCookies(page);
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(4000);
+  await forzarSoloIda(page);
   const bodyText = await page.locator('body').innerText().catch(() => '');
   const matches = [...bodyText.matchAll(/ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g)];
   const precios = matches
