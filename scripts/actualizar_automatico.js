@@ -219,6 +219,70 @@ async function buscarAereo(page, ciudad, fechaISO) {
   return { valor: min.valor, empresa: aerolinea, fuente: { texto: 'Google Flights', url } };
 }
 
+async function destildarAlojamiento(page) {
+  // El buscador tilda "Quiero buscar alojamiento" por defecto: si queda
+  // tildado, "Buscar pasajes" manda a resultados de hoteles (Booking) en
+  // vez de resultados de micros, aunque el resto del formulario esté bien.
+  try {
+    const porRol = page.getByRole('checkbox', { name: /alojamiento/i });
+    const n = await porRol.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const chk = porRol.nth(i);
+      if (await chk.isChecked().catch(() => false)) {
+        await chk.uncheck({ timeout: 2000 }).catch(() => chk.click({ timeout: 2000 }).catch(() => {}));
+      }
+    }
+    if (n === 0) {
+      // El checkbox puede no tener "nombre accesible" (aria) armado: se
+      // busca por el texto de la etiqueta y se destilda el input más cercano.
+      const etiqueta = page.locator('label, span, div').filter({ hasText: /quiero buscar alojamiento/i }).first();
+      if (await etiqueta.count().catch(() => 0)) {
+        const caja = etiqueta.locator('input[type="checkbox"]').first();
+        if (await caja.count().catch(() => 0) && await caja.isChecked().catch(() => false)) {
+          await caja.click({ timeout: 2000 }).catch(() => {});
+        }
+      }
+    }
+  } catch { /* si no aparece el checkbox en esta versión de la página, no hay nada que destildar */ }
+}
+
+async function seleccionarCiudad(page, input, ciudad, etiqueta) {
+  await input.click();
+  await input.fill(ciudad);
+  // El desplegable de sugerencias puede armarse con distintas etiquetas según
+  // la versión del sitio; se prueban los patrones más comunes de golpe.
+  const opciones = page.locator(
+    '[role="option"], .MuiAutocomplete-option, li[class*="suggest" i], li[class*="option" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
+  );
+  let seleccionado = false;
+  try {
+    await opciones.first().waitFor({ state: 'visible', timeout: 4000 });
+    const total = await opciones.count();
+    // Se prefiere la opción cuyo texto realmente contiene la ciudad buscada
+    // (por si aparecen resultados mezclados, ej. terminales y ciudades); si
+    // ninguna matchea se usa igual la primera para no dejar el campo vacío.
+    let candidata = opciones.first();
+    for (let i = 0; i < total; i++) {
+      const texto = (await opciones.nth(i).innerText().catch(() => '')).toLowerCase();
+      if (texto.includes(ciudad.toLowerCase())) { candidata = opciones.nth(i); break; }
+    }
+    await candidata.click({ timeout: 3000 });
+    seleccionado = true;
+  } catch {
+    console.log(`  No aparecieron sugerencias en pantalla para "${ciudad}" (${etiqueta}); se intenta con el teclado.`);
+  }
+  if (!seleccionado) {
+    await page.waitForTimeout(600);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+  }
+  await page.waitForTimeout(400);
+  const valorFinal = await input.inputValue().catch(() => '');
+  if (!valorFinal.trim()) {
+    console.log(`  Atención: el campo ${etiqueta} quedó vacío después de intentar seleccionar "${ciudad}".`);
+  }
+}
+
 async function buscarTerrestre(page, ciudad, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
   const fechaDDMMYYYY = `${d}-${m}-${y}`;
@@ -227,21 +291,12 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
   await page.waitForTimeout(1500);
   console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
   try {
+    await destildarAlojamiento(page);
     // Origen y Destino comparten el mismo placeholder ("Ingrese Ciudad o
     // Terminal") — se distinguen por orden en la página, no por texto.
     const camposCiudad = page.getByPlaceholder('Ingrese Ciudad o Terminal');
-    const origenInput = camposCiudad.first();
-    await origenInput.click();
-    await origenInput.fill(ciudad);
-    await page.waitForTimeout(1200);
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
-    const destinoInput = camposCiudad.nth(1);
-    await destinoInput.click();
-    await destinoInput.fill('Retiro');
-    await page.waitForTimeout(1200);
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
+    await seleccionarCiudad(page, camposCiudad.first(), ciudad, 'Origen');
+    await seleccionarCiudad(page, camposCiudad.nth(1), 'Retiro', 'Destino');
     // El campo de fecha es de solo lectura: hay que abrir el calendario y
     // clickear el día (botones con el número solo, ej. "2"), no se puede
     // escribir. El calendario muestra el mes actual primero, así que el
@@ -259,6 +314,10 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
     const aplicar = page.getByRole('button', { name: /aplicar|confirmar/i }).first();
     if (await aplicar.count().catch(() => 0)) await aplicar.click().catch(() => {});
     await page.keyboard.press('Escape').catch(() => {});
+    const errorObligatorio = page.getByText(/campo es obligatorio/i).first();
+    if (await errorObligatorio.isVisible({ timeout: 1000 }).catch(() => false)) {
+      console.log('  Atención: el formulario marca "campo obligatorio" antes de buscar (Origen/Destino no habrían quedado bien seleccionados).');
+    }
     await page.getByRole('button', { name: /Buscar pasajes/i }).click();
     await page.waitForTimeout(6000);
   } catch (err) {
