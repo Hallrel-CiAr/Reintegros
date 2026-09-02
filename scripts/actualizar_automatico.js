@@ -203,6 +203,8 @@ async function buscarAereo(page, ciudad, fechaISO) {
   await cerrarBannerCookies(page);
   await page.waitForTimeout(4000);
   await forzarSoloIda(page);
+  const fechaMostrada = await page.locator('text=/^\\w{3}\\.?,? \\d{1,2} \\w+/').first().innerText().catch(() => null);
+  console.log('  Se pidió: ' + fechaLegible + ' | Fecha mostrada en la página: ' + (fechaMostrada || '(no se pudo leer)'));
   const bodyText = await page.locator('body').innerText().catch(() => '');
   const matches = [...bodyText.matchAll(/ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g)];
   const precios = matches
