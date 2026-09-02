@@ -227,19 +227,22 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
   await page.waitForTimeout(1500);
   console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
   try {
-    const origenInput = page.getByPlaceholder(/Origen/i).first();
+    // Origen y Destino comparten el mismo placeholder ("Ingrese Ciudad o
+    // Terminal") — se distinguen por orden en la página, no por texto.
+    const camposCiudad = page.getByPlaceholder('Ingrese Ciudad o Terminal');
+    const origenInput = camposCiudad.first();
     await origenInput.click();
     await origenInput.fill(ciudad);
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1200);
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
-    const destinoInput = page.getByPlaceholder(/Destino|dónde/i).first();
+    const destinoInput = camposCiudad.nth(1);
     await destinoInput.click();
     await destinoInput.fill('Retiro');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1200);
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
-    const fechaInput = page.getByPlaceholder(/Partida|Fecha/i).first();
+    const fechaInput = page.getByPlaceholder('Fecha partida');
     await fechaInput.click();
     await fechaInput.fill(fechaDDMMYYYY);
     await page.keyboard.press('Escape');
