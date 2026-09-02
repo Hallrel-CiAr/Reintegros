@@ -242,12 +242,17 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
     await page.waitForTimeout(1200);
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
+    // El campo de fecha es de solo lectura: hay que abrir el calendario y
+    // clickear el día, no se puede escribir. Todavía no sabemos cómo están
+    // armados los botones del calendario, así que por ahora solo se abre,
+    // se registra qué hay adentro (para ajustar esto en el próximo paso) y
+    // se corta acá — no se manda el formulario con una fecha sin confirmar.
     const fechaInput = page.getByPlaceholder('Fecha partida');
     await fechaInput.click();
-    await fechaInput.fill(fechaDDMMYYYY);
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: /Buscar pasajes/i }).click();
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(1000);
+    const botones = await page.getByRole('button').allInnerTexts().catch(() => []);
+    console.log('  Calendario abierto. Botones visibles (primeros 40): ' + JSON.stringify(botones.filter(t => t.trim()).slice(0, 40)));
+    throw new Error('Falta implementar la selección de día en el calendario (ver botones listados arriba y la captura).');
   } catch (err) {
     console.log('  No se pudo completar el formulario de Plataforma 10: ' + err.message);
     return null;
