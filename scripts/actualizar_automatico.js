@@ -214,7 +214,11 @@ async function ubicarCampoTexto(page, patrones, etiqueta) {
 // contiene lo buscado (por si aparecen resultados mezclados) y, si no
 // aparece ninguna sugerencia visible, cae a navegar con el teclado.
 async function seleccionarSugerencia(page, input, texto, etiqueta) {
-  await input.click();
+  // Algunos sitios (Central de Pasajes) esconden el input real detrás de un
+  // widget (Select2) que intercepta los clics normales — Playwright espera
+  // 30s a que "deje de estar tapado" y nunca pasa. Si el clic normal no
+  // entra en 5s, se fuerza (ignora la comprobación de que esté tapado).
+  await input.click({ timeout: 5000 }).catch(() => input.click({ force: true }));
   await input.fill(texto);
   const opciones = page.locator(
     '[role="option"], .MuiAutocomplete-option, li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
@@ -275,32 +279,36 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
     await seleccionarSugerencia(page, origenInput, ciudad, 'Origen');
     await seleccionarSugerencia(page, destinoInput, 'Buenos Aires', 'Destino');
 
-    // La fecha puede ser un campo editable (dd/mm/aaaa) o, como en
-    // Plataforma 10, de solo lectura con calendario propio — se intentan
-    // ambos caminos.
-    const diaTexto = String(Number(d));
-    const fechaInput = await ubicarCampoTexto(page, [/fecha de ida/i, /fecha de salida/i, /fecha ida/i], 'Fecha');
-    if (fechaInput) {
-      const esEditable = await fechaInput.isEditable().catch(() => false);
-      if (esEditable) {
-        await fechaInput.fill(`${d}/${m}/${y}`);
-      } else {
-        await fechaInput.click();
-        await page.waitForTimeout(800);
-        await page.locator('button', { hasText: new RegExp('^' + diaTexto + '$') }).first().click({ timeout: 5000 }).catch(async () => {
-          console.log('  No se pudo clickear el día en el calendario de Aerolíneas.');
-          await volcarDiagnostico(page, 'calendario');
-        });
-      }
+    // Relevado con diagnóstico en una corrida real: el campo de fecha de ida
+    // tiene name="from-date" (placeholder "dd/mm/aaaa") — el intento anterior
+    // no lo encontraba (buscaba /fecha de ida/i, que no matchea nada de eso),
+    // así que el formulario quedaba sin fecha y "Buscar vuelos" no navegaba a
+    // ningún lado: lo que se leía después eran precios promocionales de la
+    // portada, no tarifas reales (se vio en una corrida real: las 3 rutas
+    // guardaron exactamente el mismo precio).
+    const fechaInput = page.locator('input[name="from-date"]');
+    if (await fechaInput.count().catch(() => 0)) {
+      await fechaInput.fill(`${d}/${m}/${y}`).catch(async err => {
+        console.log('  No se pudo completar la fecha de Aerolíneas Argentinas: ' + err.message);
+      });
     } else {
-      console.log('  No se encontró el campo de fecha — se sigue igual por si ya tiene una fecha válida por defecto.');
+      console.log('  No se encontró el campo de fecha (name="from-date") — se sigue igual por si ya tiene una fecha válida por defecto.');
     }
     await page.waitForTimeout(500);
     await capturarDebug(page, `diag_aereo_${codigoOrigen}_formulario-completo`);
 
+    const urlAntes = page.url();
     const botonBuscar = page.getByRole('button', { name: /buscar/i }).first();
     await botonBuscar.click({ timeout: 5000 });
     await page.waitForTimeout(6000);
+    // Si la URL no cambió, lo más probable es que el formulario no se haya
+    // enviado (por ejemplo por falta de fecha) y seguimos en la portada — los
+    // precios que se leerían ahí son promocionales, no de la ruta buscada.
+    if (page.url() === urlAntes) {
+      console.log('  La URL no cambió después de "Buscar vuelos" — probablemente el formulario no se envió. Se descarta cualquier precio de esta página.');
+      await capturarDebug(page, `diag_aereo_${codigoOrigen}_no-navego`);
+      return null;
+    }
   } catch (err) {
     console.log('  No se pudo completar el formulario de Aerolíneas Argentinas: ' + err.message);
     await capturarDebug(page, `diag_aereo_${codigoOrigen}_error`);
