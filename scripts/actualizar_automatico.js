@@ -228,7 +228,19 @@ async function seleccionarSugerencia(page, input, texto, etiqueta, opciones_ = {
   // el código ya le había hecho fill()).
   const clickTarget = opciones_.clickTarget || input;
   const campoTexto = opciones_.searchField || input;
-  await clickTarget.click({ timeout: 5000 }).catch(() => clickTarget.click({ force: true }));
+  let clicEntroNormal = true;
+  await clickTarget.click({ timeout: 5000 }).catch(() => { clicEntroNormal = false; return clickTarget.click({ force: true }); });
+  if (opciones_.searchField) {
+    // Diagnóstico específico para el caso Select2 (Central de Pasajes): si
+    // esto vuelve a fallar, esta info dice si el desplegable llegó a abrirse
+    // en el DOM (aunque Playwright no lo considere "visible") o si el clic
+    // no lo abrió en absoluto — sin esto solo sabíamos que el fill() nunca
+    // encontró el campo, no por qué.
+    const abiertos = await page.locator('.select2-container--open').count().catch(() => -1);
+    const camposEnDom = await page.locator('.select2-search__field').count().catch(() => -1);
+    console.log(`  [diagnóstico select2 — ${etiqueta}] clic normal entró: ${clicEntroNormal}; contenedores select2 abiertos: ${abiertos}; campos de búsqueda en el DOM (visibles o no): ${camposEnDom}`);
+    await capturarDebug(page, `select2_${etiqueta.replace(/[^a-z0-9]+/gi, '-')}`);
+  }
   await campoTexto.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
   await campoTexto.fill(texto);
   const opciones = page.locator(
@@ -435,11 +447,11 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
     const campoBusquedaSelect2 = page.locator('.select2-search__field:visible').first();
     const hayOrigenVisual = await origenVisual.count().catch(() => 0);
     const hayDestinoVisual = await destinoVisual.count().catch(() => 0);
-    await seleccionarSugerencia(page, origenInput, ciudad, 'Origen', {
+    await seleccionarSugerencia(page, origenInput, ciudad, `Origen ${codigoOrigen}`, {
       clickTarget: hayOrigenVisual ? origenVisual : origenInput,
       searchField: hayOrigenVisual ? campoBusquedaSelect2 : undefined
     });
-    await seleccionarSugerencia(page, destinoInput, 'Retiro', 'Destino', {
+    await seleccionarSugerencia(page, destinoInput, 'Retiro', `Destino ${codigoOrigen}`, {
       clickTarget: hayDestinoVisual ? destinoVisual : destinoInput,
       searchField: hayDestinoVisual ? campoBusquedaSelect2 : undefined
     });
