@@ -213,19 +213,24 @@ async function ubicarCampoTexto(page, patrones, etiqueta) {
 // este tipo de desplegable de forma parecida. Prefiere la opción cuyo texto
 // contiene lo buscado (por si aparecen resultados mezclados) y, si no
 // aparece ninguna sugerencia visible, cae a navegar con el teclado.
-async function seleccionarSugerencia(page, input, texto, etiqueta) {
+async function seleccionarSugerencia(page, input, texto, etiqueta, opciones_ = {}) {
   // Algunos sitios (Central de Pasajes) esconden el input real detrás de un
   // widget (Select2) que intercepta los clics normales — Playwright espera
   // 30s a que "deje de estar tapado" y nunca pasa. Si el clic normal no
   // entra en 5s, se fuerza (ignora la comprobación de que esté tapado).
-  await input.click({ timeout: 5000 }).catch(() => input.click({ force: true }));
+  // clickTarget: si el elemento clickeable para ABRIR el desplegable es
+  // distinto del input real (típico de Select2, que renderiza su propio
+  // widget visual encima de un <input>/<select> oculto), se puede pasar por
+  // separado — el texto siempre se escribe en `input`.
+  const clickTarget = opciones_.clickTarget || input;
+  await clickTarget.click({ timeout: 5000 }).catch(() => clickTarget.click({ force: true }));
   await input.fill(texto);
   const opciones = page.locator(
-    '[role="option"], .MuiAutocomplete-option, li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
+    '[role="option"], .MuiAutocomplete-option, .select2-results__option, li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
   );
   let seleccionado = false;
   try {
-    await opciones.first().waitFor({ state: 'visible', timeout: 4000 });
+    await opciones.first().waitFor({ state: 'visible', timeout: 6000 });
     const total = await opciones.count();
     let candidata = opciones.first();
     for (let i = 0; i < total; i++) {
@@ -291,6 +296,12 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
       await fechaInput.fill(`${d}/${m}/${y}`).catch(async err => {
         console.log('  No se pudo completar la fecha de Aerolíneas Argentinas: ' + err.message);
       });
+      // Escribir la fecha suele abrir un calendario propio encima del
+      // formulario; si queda abierto tapa el botón "Buscar vuelos" (se vio
+      // en una corrida real: el clic ahí tiraba timeout). Se cierra con
+      // Escape y, por las dudas, con un clic afuera del campo.
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.locator('body').click({ position: { x: 5, y: 5 }, timeout: 2000 }).catch(() => {});
     } else {
       console.log('  No se encontró el campo de fecha (name="from-date") — se sigue igual por si ya tiene una fecha válida por defecto.');
     }
@@ -299,7 +310,7 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
 
     const urlAntes = page.url();
     const botonBuscar = page.getByRole('button', { name: /buscar/i }).first();
-    await botonBuscar.click({ timeout: 5000 });
+    await botonBuscar.click({ timeout: 5000 }).catch(() => botonBuscar.click({ force: true }));
     await page.waitForTimeout(6000);
     // Si la URL no cambió, lo más probable es que el formulario no se haya
     // enviado (por ejemplo por falta de fecha) y seguimos en la portada — los
@@ -390,8 +401,26 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
       console.log('  No se encontró el formulario de búsqueda de Central de Pasajes (cambió el markup).');
       return null;
     }
-    await seleccionarSugerencia(page, origenInput, ciudad, 'Origen');
-    await seleccionarSugerencia(page, destinoInput, 'Retiro', 'Destino');
+    // El input real queda oculto detrás del widget visual que arma Select2
+    // (patrón típico: un <span id="select2-<name>-container"> al lado del
+    // input) — hay que clickear ESE elemento para que abra el desplegable de
+    // sugerencias, clickear el input escondido no lo dispara aunque el clic
+    // en sí entre (se vio en una corrida real: el clic ya no tira timeout,
+    // pero nunca aparecen sugerencias). Si no existe ese contenedor, se cae
+    // al input con clic forzado como antes.
+    const origenVisual = page.locator('#select2-PadOrigen-container');
+    const destinoVisual = page.locator('#select2-PadDestino-container');
+    if (!(await origenVisual.count().catch(() => 0))) {
+      console.log('  No se encontró #select2-PadOrigen-container — volcando el HTML alrededor del input para ajustar en la próxima corrida.');
+      const html = await origenInput.evaluate(el => el.closest('div,span')?.outerHTML?.slice(0, 1500) || el.outerHTML).catch(() => null);
+      console.log('  [diagnóstico] HTML cerca de PadOrigen: ' + html);
+    }
+    await seleccionarSugerencia(page, origenInput, ciudad, 'Origen', {
+      clickTarget: (await origenVisual.count().catch(() => 0)) ? origenVisual : origenInput
+    });
+    await seleccionarSugerencia(page, destinoInput, 'Retiro', 'Destino', {
+      clickTarget: (await destinoVisual.count().catch(() => 0)) ? destinoVisual : destinoInput
+    });
 
     const fechaInput = page.locator('input[name="fechaPartida"]');
     if (await fechaInput.count().catch(() => 0)) {
