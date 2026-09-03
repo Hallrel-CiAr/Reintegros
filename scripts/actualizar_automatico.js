@@ -314,6 +314,21 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
     const aplicar = page.getByRole('button', { name: /aplicar|confirmar/i }).first();
     if (await aplicar.count().catch(() => 0)) await aplicar.click().catch(() => {});
     await page.keyboard.press('Escape').catch(() => {});
+    // El sitio recuerda la última búsqueda (localStorage) y a veces la
+    // restaura DESPUÉS de que este script ya completó los campos, pisando lo
+    // recién elegido (se vio en capturas reales: Origen volvía a la ciudad de
+    // la búsqueda anterior). Se revisa justo antes de enviar y, si pasó, se
+    // vuelve a seleccionar.
+    const origenValor = await camposCiudad.first().inputValue().catch(() => '');
+    if (!origenValor.toLowerCase().includes(ciudad.toLowerCase())) {
+      console.log(`  El campo Origen volvió a "${origenValor}" antes de buscar (probablemente el sitio restauró la última búsqueda guardada); se corrige.`);
+      await seleccionarCiudad(page, camposCiudad.first(), ciudad, 'Origen');
+    }
+    const destinoValor = await camposCiudad.nth(1).inputValue().catch(() => '');
+    if (!destinoValor.toLowerCase().includes('retiro')) {
+      console.log(`  El campo Destino volvió a "${destinoValor}" antes de buscar; se corrige.`);
+      await seleccionarCiudad(page, camposCiudad.nth(1), 'Retiro', 'Destino');
+    }
     const errorObligatorio = page.getByText(/campo es obligatorio/i).first();
     if (await errorObligatorio.isVisible({ timeout: 1000 }).catch(() => false)) {
       console.log('  Atención: el formulario marca "campo obligatorio" antes de buscar (Origen/Destino no habrían quedado bien seleccionados).');
@@ -322,6 +337,16 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
     await page.waitForTimeout(6000);
   } catch (err) {
     console.log('  No se pudo completar el formulario de Plataforma 10: ' + err.message);
+    return null;
+  }
+  // La página puede mostrar precios de OTRAS fechas en la franja de fechas de
+  // arriba (ej. "Jue. 03 — ARS 154.000") aunque el día pedido no tenga
+  // servicios ("No disponemos de servicios para la fecha indicada"). Sin este
+  // chequeo, el regex de abajo agarra ese precio de otro día como si fuera
+  // válido para la fecha buscada (se vio en una captura real).
+  const sinServicio = page.getByText(/no disponemos de servicios/i).first();
+  if (await sinServicio.isVisible({ timeout: 1000 }).catch(() => false)) {
+    console.log('  La página indica que no hay servicios para la fecha pedida.');
     return null;
   }
   const bodyText = await page.locator('body').innerText().catch(() => '');
