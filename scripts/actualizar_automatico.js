@@ -2,8 +2,10 @@
 /*
  * Búsqueda diaria automática de valores de referencia de pasajes (SOSUNC).
  *
- * Terrestre (Plataforma 10): promedio de los precios de los servicios
- * listados para la fecha y ruta.
+ * Terrestre (Central de Pasajes, centraldepasajes.com.ar): promedio de los
+ * precios de los servicios listados para la fecha y ruta. Reemplaza a
+ * Plataforma 10, que daba valores correctos pero cada vez más lentos
+ * (throttling tras varias búsquedas seguidas).
  * Aéreo (Aerolíneas Argentinas, aerolineas.com.ar): la tarifa más económica
  * encontrada. Se eligió por ser la única aerolínea con vuelos regulares a
  * estas 3 ciudades — comprar directo en su sitio da un precio limpio, sin
@@ -17,10 +19,11 @@
  *
  * Corre como GitHub Action (ver .github/workflows/actualizacion-diaria.yml),
  * NO dentro de Claude, porque el entorno de Claude no tiene salida a estos
- * sitios. La parte de Aerolíneas Argentinas nunca se pudo probar en vivo
- * (mismo motivo) — si algo de sus selectores no encuentra nada, revisá el
- * log de la Action (queda diagnóstico completo volcado en cada corrida) y
- * las capturas "diag_aereo_*" en el artifact de debug.
+ * sitios. Ni Aerolíneas Argentinas ni Central de Pasajes se pudieron probar
+ * en vivo (mismo motivo) — si algo de sus selectores no encuentra nada,
+ * revisá el log de la Action (queda diagnóstico completo volcado en cada
+ * corrida) y las capturas "diag_aereo_*" / "diag_terrestre_*" del artifact
+ * de debug.
  *
  * Variables de entorno requeridas: FIREBASE_API_KEY, FIREBASE_PROJECT_ID,
  * ROBOT_EMAIL, ROBOT_PASSWORD.
@@ -205,19 +208,42 @@ async function ubicarCampoTexto(page, patrones, etiqueta) {
   return null;
 }
 
-async function seleccionarCiudadAerolineas(page, input, texto, etiqueta) {
+// Selecciona una sugerencia de un desplegable de autocompletado de ciudad —
+// se reutiliza para Aerolíneas Argentinas y Central de Pasajes, que arman
+// este tipo de desplegable de forma parecida. Prefiere la opción cuyo texto
+// contiene lo buscado (por si aparecen resultados mezclados) y, si no
+// aparece ninguna sugerencia visible, cae a navegar con el teclado.
+async function seleccionarSugerencia(page, input, texto, etiqueta) {
   await input.click();
   await input.fill(texto);
-  const opciones = page.locator('[role="option"], li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i]');
+  const opciones = page.locator(
+    '[role="option"], .MuiAutocomplete-option, li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
+  );
+  let seleccionado = false;
   try {
     await opciones.first().waitFor({ state: 'visible', timeout: 4000 });
-    await opciones.first().click({ timeout: 3000 });
-    await page.waitForTimeout(300);
-    return true;
+    const total = await opciones.count();
+    let candidata = opciones.first();
+    for (let i = 0; i < total; i++) {
+      const t = (await opciones.nth(i).innerText().catch(() => '')).toLowerCase();
+      if (t.includes(texto.toLowerCase())) { candidata = opciones.nth(i); break; }
+    }
+    await candidata.click({ timeout: 3000 });
+    seleccionado = true;
   } catch {
-    console.log(`  No aparecieron sugerencias para "${texto}" en ${etiqueta} (Aerolíneas Argentinas).`);
-    return false;
+    console.log(`  No aparecieron sugerencias en pantalla para "${texto}" (${etiqueta}); se intenta con el teclado.`);
   }
+  if (!seleccionado) {
+    await page.waitForTimeout(600);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+  }
+  await page.waitForTimeout(400);
+  const valorFinal = await input.inputValue().catch(() => '');
+  if (!valorFinal.trim()) {
+    console.log(`  Atención: el campo ${etiqueta} quedó vacío después de intentar seleccionar "${texto}".`);
+  }
+  return seleccionado || !!valorFinal.trim();
 }
 
 async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
@@ -246,8 +272,8 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
       console.log('  No se pudo ubicar el formulario de búsqueda de Aerolíneas Argentinas.');
       return null;
     }
-    await seleccionarCiudadAerolineas(page, origenInput, ciudad, 'Origen');
-    await seleccionarCiudadAerolineas(page, destinoInput, 'Buenos Aires', 'Destino');
+    await seleccionarSugerencia(page, origenInput, ciudad, 'Origen');
+    await seleccionarSugerencia(page, destinoInput, 'Buenos Aires', 'Destino');
 
     // La fecha puede ser un campo editable (dd/mm/aaaa) o, como en
     // Plataforma 10, de solo lectura con calendario propio — se intentan
@@ -327,111 +353,73 @@ async function destildarAlojamiento(page) {
   } catch { /* si no aparece el checkbox en esta versión de la página, no hay nada que destildar */ }
 }
 
-async function seleccionarCiudad(page, input, ciudad, etiqueta) {
-  await input.click();
-  await input.fill(ciudad);
-  // El desplegable de sugerencias puede armarse con distintas etiquetas según
-  // la versión del sitio; se prueban los patrones más comunes de golpe.
-  const opciones = page.locator(
-    '[role="option"], .MuiAutocomplete-option, li[class*="suggest" i], li[class*="option" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
-  );
-  let seleccionado = false;
-  try {
-    await opciones.first().waitFor({ state: 'visible', timeout: 4000 });
-    const total = await opciones.count();
-    // Se prefiere la opción cuyo texto realmente contiene la ciudad buscada
-    // (por si aparecen resultados mezclados, ej. terminales y ciudades); si
-    // ninguna matchea se usa igual la primera para no dejar el campo vacío.
-    let candidata = opciones.first();
-    for (let i = 0; i < total; i++) {
-      const texto = (await opciones.nth(i).innerText().catch(() => '')).toLowerCase();
-      if (texto.includes(ciudad.toLowerCase())) { candidata = opciones.nth(i); break; }
-    }
-    await candidata.click({ timeout: 3000 });
-    seleccionado = true;
-  } catch {
-    console.log(`  No aparecieron sugerencias en pantalla para "${ciudad}" (${etiqueta}); se intenta con el teclado.`);
-  }
-  if (!seleccionado) {
-    await page.waitForTimeout(600);
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
-  }
-  await page.waitForTimeout(400);
-  const valorFinal = await input.inputValue().catch(() => '');
-  if (!valorFinal.trim()) {
-    console.log(`  Atención: el campo ${etiqueta} quedó vacío después de intentar seleccionar "${ciudad}".`);
-  }
-}
-
-async function buscarTerrestre(page, ciudad, fechaISO) {
+// Plataforma 10 daba valores correctos pero cada vez más lentos (throttling
+// tras varias búsquedas seguidas — una corrida llegó a tardar 7 min por
+// ruta). Se prueba Central de Pasajes como alternativa. Igual que con
+// Aerolíneas Argentinas, nunca se pudo probar este sitio en vivo, así que
+// se vuelca el mismo diagnóstico completo en cada corrida.
+async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
-  const fechaDDMMYYYY = `${d}-${m}-${y}`;
-  await page.goto('https://www.plataforma10.com.ar/', { waitUntil: 'domcontentloaded', timeout: 45000 });
+  const url = 'https://www.centraldepasajes.com.ar/';
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await cerrarBannerCookies(page);
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(2000);
   console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
+  await volcarDiagnostico(page, 'home');
+  await capturarDebug(page, `diag_terrestre_${codigoOrigen}_home`);
+
   try {
     await destildarAlojamiento(page);
-    // Origen y Destino comparten el mismo placeholder ("Ingrese Ciudad o
-    // Terminal") — se distinguen por orden en la página, no por texto.
-    const camposCiudad = page.getByPlaceholder('Ingrese Ciudad o Terminal');
-    await seleccionarCiudad(page, camposCiudad.first(), ciudad, 'Origen');
-    await seleccionarCiudad(page, camposCiudad.nth(1), 'Retiro', 'Destino');
-    // El campo de fecha es de solo lectura: hay que abrir el calendario y
-    // clickear el día (botones con el número solo, ej. "2"), no se puede
-    // escribir. El calendario muestra el mes actual primero, así que el
-    // primer botón con ese número exacto es siempre el correcto (esto solo
-    // se usa para la fecha de hoy, nunca hace falta cambiar de mes).
-    const fechaInput = page.getByPlaceholder('Fecha partida');
-    await fechaInput.click();
-    await page.waitForTimeout(1000);
-    // Se busca por el texto real del botón, no por su "nombre accesible"
-    // (que puede incluir la fecha completa en un aria-label y no matchear
-    // por nombre exacto aunque el texto visible sea solo el número).
+
+    const origenInput = await ubicarCampoTexto(page, [/origen/i, /desde/i, /ciudad de origen/i, /ciudad o terminal/i], 'Origen');
+    const destinoInput = await ubicarCampoTexto(page, [/destino/i, /hasta/i, /ciudad de destino/i], 'Destino');
+    if (!origenInput || !destinoInput) {
+      console.log('  No se pudo ubicar el formulario de búsqueda de Central de Pasajes.');
+      return null;
+    }
+    await seleccionarSugerencia(page, origenInput, ciudad, 'Origen');
+    await seleccionarSugerencia(page, destinoInput, 'Retiro', 'Destino');
+
+    // La fecha puede ser un campo editable (dd/mm/aaaa) o de solo lectura con
+    // calendario propio, como pasaba en Plataforma 10 — se intentan ambos.
     const diaTexto = String(Number(d));
-    await page.locator('button', { hasText: new RegExp('^' + diaTexto + '$') }).first().click();
-    await page.waitForTimeout(800);
-    const aplicar = page.getByRole('button', { name: /aplicar|confirmar/i }).first();
-    if (await aplicar.count().catch(() => 0)) await aplicar.click().catch(() => {});
-    await page.keyboard.press('Escape').catch(() => {});
-    // El sitio recuerda la última búsqueda (localStorage) y a veces la
-    // restaura DESPUÉS de que este script ya completó los campos, pisando lo
-    // recién elegido (se vio en capturas reales: Origen volvía a la ciudad de
-    // la búsqueda anterior). Se revisa justo antes de enviar y, si pasó, se
-    // vuelve a seleccionar.
-    const origenValor = await camposCiudad.first().inputValue().catch(() => '');
-    if (!origenValor.toLowerCase().includes(ciudad.toLowerCase())) {
-      console.log(`  El campo Origen volvió a "${origenValor}" antes de buscar (probablemente el sitio restauró la última búsqueda guardada); se corrige.`);
-      await seleccionarCiudad(page, camposCiudad.first(), ciudad, 'Origen');
+    const fechaInput = await ubicarCampoTexto(page, [/fecha de ida/i, /fecha partida/i, /fecha de salida/i], 'Fecha');
+    if (fechaInput) {
+      const esEditable = await fechaInput.isEditable().catch(() => false);
+      if (esEditable) {
+        await fechaInput.fill(`${d}/${m}/${y}`);
+      } else {
+        await fechaInput.click();
+        await page.waitForTimeout(800);
+        await page.locator('button', { hasText: new RegExp('^' + diaTexto + '$') }).first().click({ timeout: 5000 }).catch(async () => {
+          console.log('  No se pudo clickear el día en el calendario de Central de Pasajes.');
+          await volcarDiagnostico(page, 'calendario');
+        });
+      }
+    } else {
+      console.log('  No se encontró el campo de fecha — se sigue igual por si ya tiene una fecha válida por defecto.');
     }
-    const destinoValor = await camposCiudad.nth(1).inputValue().catch(() => '');
-    if (!destinoValor.toLowerCase().includes('retiro')) {
-      console.log(`  El campo Destino volvió a "${destinoValor}" antes de buscar; se corrige.`);
-      await seleccionarCiudad(page, camposCiudad.nth(1), 'Retiro', 'Destino');
-    }
-    const errorObligatorio = page.getByText(/campo es obligatorio/i).first();
-    if (await errorObligatorio.isVisible({ timeout: 1000 }).catch(() => false)) {
-      console.log('  Atención: el formulario marca "campo obligatorio" antes de buscar (Origen/Destino no habrían quedado bien seleccionados).');
-    }
-    await page.getByRole('button', { name: /Buscar pasajes/i }).click();
+    await page.waitForTimeout(500);
+    await capturarDebug(page, `diag_terrestre_${codigoOrigen}_formulario-completo`);
+
+    const botonBuscar = page.getByRole('button', { name: /buscar/i }).first();
+    await botonBuscar.click({ timeout: 5000 });
     await page.waitForTimeout(6000);
   } catch (err) {
-    console.log('  No se pudo completar el formulario de Plataforma 10: ' + err.message);
+    console.log('  No se pudo completar el formulario de Central de Pasajes: ' + err.message);
+    await capturarDebug(page, `diag_terrestre_${codigoOrigen}_error`);
     return null;
   }
-  // La página puede mostrar precios de OTRAS fechas en la franja de fechas de
-  // arriba (ej. "Jue. 03 — ARS 154.000") aunque el día pedido no tenga
-  // servicios ("No disponemos de servicios para la fecha indicada"). Sin este
-  // chequeo, el regex de abajo agarra ese precio de otro día como si fuera
-  // válido para la fecha buscada (se vio en una captura real).
-  const sinServicio = page.getByText(/no disponemos de servicios/i).first();
+
+  await capturarDebug(page, `diag_terrestre_${codigoOrigen}_resultados`);
+  const sinServicio = page.getByText(/no (hay|disponemos|encontramos) (servicios|resultados)|sin disponibilidad/i).first();
   if (await sinServicio.isVisible({ timeout: 1000 }).catch(() => false)) {
     console.log('  La página indica que no hay servicios para la fecha pedida.');
     return null;
   }
+  await volcarDiagnostico(page, 'resultados');
   const bodyText = await page.locator('body').innerText().catch(() => '');
-  const matches = bodyText.match(/ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g) || [];
+  const matches = bodyText.match(/\$\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g) || [];
   const precios = matches
     .map(s => Number(s.replace(/[^\d]/g, '')))
     .filter(n => Number.isFinite(n) && n > 1000);
@@ -440,8 +428,8 @@ async function buscarTerrestre(page, ciudad, fechaISO) {
   const promedio = Math.round(precios.reduce((a, b) => a + b, 0) / precios.length);
   return {
     valor: promedio,
-    empresa: 'Promedio (Plataforma 10, ' + precios.length + ' servicio' + (precios.length === 1 ? '' : 's') + ')',
-    fuente: { texto: 'Plataforma 10', url: page.url() }
+    empresa: 'Promedio (Central de Pasajes, ' + precios.length + ' servicio' + (precios.length === 1 ? '' : 's') + ')',
+    fuente: { texto: 'Central de Pasajes', url: page.url() }
   };
 }
 
@@ -462,7 +450,7 @@ async function procesarFecha(idToken, browser, fecha) {
 
     let resultado = null;
     try {
-      resultado = r.medio === 'aereo' ? await buscarAereo(page, r.ciudad, r.code.split('-')[0], fecha) : await buscarTerrestre(page, r.ciudad, fecha);
+      resultado = r.medio === 'aereo' ? await buscarAereo(page, r.ciudad, r.code.split('-')[0], fecha) : await buscarTerrestre(page, r.ciudad, r.code.split('-')[0], fecha);
     } catch (err) {
       console.log('  Error buscando: ' + err.message);
     }
