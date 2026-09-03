@@ -10,7 +10,10 @@ on:
 jobs:
   actualizar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # La corrida del 3/9 tardó 19:49 (al límite de 20) por lentitud real del
+    # sitio tras varias búsquedas seguidas — se sube el margen para que no se
+    # corte a mitad de camino.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
