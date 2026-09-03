@@ -1,0 +1,45 @@
+name: Publicar página en GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - index.html
+      - app.js
+      - firebase-config.js
+      - .github/workflows/pages.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # Solo se publican los 3 archivos de la página en sí (no scripts/ ni
+      # los workflows), tal como indica SETUP.md para el hosting estático.
+      - name: Preparar archivos públicos
+        run: |
+          mkdir -p _site
+          cp index.html app.js firebase-config.js _site/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
