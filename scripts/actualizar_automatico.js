@@ -221,10 +221,16 @@ async function seleccionarSugerencia(page, input, texto, etiqueta, opciones_ = {
   // clickTarget: si el elemento clickeable para ABRIR el desplegable es
   // distinto del input real (típico de Select2, que renderiza su propio
   // widget visual encima de un <input>/<select> oculto), se puede pasar por
-  // separado — el texto siempre se escribe en `input`.
+  // separado. searchField: Select2 además arma, al abrir el desplegable, un
+  // campo de búsqueda PROPIO (.select2-search__field) donde hay que escribir
+  // — escribir en el input oculto original no hace nada (se vio en una
+  // captura real: el campo quedaba vacío y el sitio pedía completarlo, aunque
+  // el código ya le había hecho fill()).
   const clickTarget = opciones_.clickTarget || input;
+  const campoTexto = opciones_.searchField || input;
   await clickTarget.click({ timeout: 5000 }).catch(() => clickTarget.click({ force: true }));
-  await input.fill(texto);
+  await campoTexto.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
+  await campoTexto.fill(texto);
   const opciones = page.locator(
     '[role="option"], .MuiAutocomplete-option, .select2-results__option, li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i], ul[class*="suggest" i] li, ul[class*="autocomplete" i] li'
   );
@@ -266,13 +272,17 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
   await capturarDebug(page, `diag_aereo_${codigoOrigen}_home`);
 
   try {
-    // El buscador suele arrancar en "Ida y vuelta"; se fuerza "Solo ida".
-    const soloIda = page.getByText(/^\s*s[oó]lo ida\s*$/i).first();
+    // El buscador arranca en "Ida y vuelta" — el radio para cambiarlo dice
+    // simplemente "Ida" (no "Solo ida", como se asumía antes; se vio en una
+    // captura real). Sin este cambio, el formulario también exige fecha de
+    // regreso y rechaza el envío con "Ingresa una fecha válida" aunque la
+    // fecha de ida esté bien completada.
+    const soloIda = page.getByText('Ida', { exact: true }).first();
     if (await soloIda.count().catch(() => 0)) {
       await soloIda.click({ timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(500);
     } else {
-      console.log('  No se encontró el botón "Solo ida" — puede que ya sea el modo por defecto.');
+      console.log('  No se encontró el botón "Ida" — puede que ya sea el modo por defecto.');
     }
 
     const origenInput = await ubicarCampoTexto(page, [/origen/i, /desde/i, /ciudad de origen/i, /salida/i], 'Origen');
@@ -415,11 +425,23 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
       const html = await origenInput.evaluate(el => el.closest('div,span')?.outerHTML?.slice(0, 1500) || el.outerHTML).catch(() => null);
       console.log('  [diagnóstico] HTML cerca de PadOrigen: ' + html);
     }
+    // El campo de búsqueda que Select2 arma al abrir el desplegable es el
+    // mismo para cualquier instancia de la página (se reutiliza) — como
+    // Origen y Destino se completan uno por vez, ":visible" siempre apunta
+    // al que está realmente abierto en ese momento. Solo se usa cuando
+    // realmente se pudo clickear el widget visual — si se cayó al input
+    // escondido (fallback), no hay desplegable Select2 abierto y ese campo
+    // de búsqueda no existiría.
+    const campoBusquedaSelect2 = page.locator('.select2-search__field:visible').first();
+    const hayOrigenVisual = await origenVisual.count().catch(() => 0);
+    const hayDestinoVisual = await destinoVisual.count().catch(() => 0);
     await seleccionarSugerencia(page, origenInput, ciudad, 'Origen', {
-      clickTarget: (await origenVisual.count().catch(() => 0)) ? origenVisual : origenInput
+      clickTarget: hayOrigenVisual ? origenVisual : origenInput,
+      searchField: hayOrigenVisual ? campoBusquedaSelect2 : undefined
     });
     await seleccionarSugerencia(page, destinoInput, 'Retiro', 'Destino', {
-      clickTarget: (await destinoVisual.count().catch(() => 0)) ? destinoVisual : destinoInput
+      clickTarget: hayDestinoVisual ? destinoVisual : destinoInput,
+      searchField: hayDestinoVisual ? campoBusquedaSelect2 : undefined
     });
 
     const fechaInput = page.locator('input[name="fechaPartida"]');
