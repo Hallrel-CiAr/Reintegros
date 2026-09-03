@@ -1,0 +1,45 @@
+name: Borrar registro (para reintentar la búsqueda automática)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fecha:
+        description: 'Fecha a borrar (AAAA-MM-DD). Vacío = hoy.'
+        required: false
+        default: ''
+      medio:
+        description: 'Qué borrar'
+        required: true
+        default: 'aereo'
+        type: choice
+        options:
+          - aereo
+          - terrestre
+          - ambos
+      rutas:
+        description: 'Códigos de ruta separados por coma (ej: NQN-CABA,BRC-CABA). Vacío = todas las del medio elegido.'
+        required: false
+        default: ''
+
+jobs:
+  borrar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Borrar registros
+        working-directory: scripts
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ROBOT_EMAIL: ${{ secrets.ROBOT_EMAIL }}
+          ROBOT_PASSWORD: ${{ secrets.ROBOT_PASSWORD }}
+          FECHA: ${{ inputs.fecha }}
+          MEDIO: ${{ inputs.medio }}
+          RUTAS: ${{ inputs.rutas }}
+        run: node borrar_registros.js
