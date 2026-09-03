@@ -11,9 +11,10 @@ jobs:
   actualizar:
     runs-on: ubuntu-latest
     # La corrida del 3/9 tardó 19:49 (al límite de 20) por lentitud real del
-    # sitio tras varias búsquedas seguidas — se sube el margen para que no se
-    # corte a mitad de camino.
-    timeout-minutes: 30
+    # sitio tras varias búsquedas seguidas. Se sube más todavía mientras se
+    # estabiliza el scraper nuevo de Aerolíneas Argentinas (agrega capturas y
+    # diagnóstico extra); una vez que ande bien se puede bajar de nuevo.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 

@@ -4,7 +4,11 @@
  *
  * Terrestre (Plataforma 10): promedio de los precios de los servicios
  * listados para la fecha y ruta.
- * Aéreo (Google Flights): la tarifa más económica encontrada.
+ * Aéreo (Aerolíneas Argentinas, aerolineas.com.ar): la tarifa más económica
+ * encontrada. Se eligió por ser la única aerolínea con vuelos regulares a
+ * estas 3 ciudades — comprar directo en su sitio da un precio limpio, sin
+ * las tarifas de otras fechas o promociones mezcladas que contaminaban la
+ * lectura cuando se scrapeaba Google Flights.
  *
  * Nunca pisa un valor ya cargado (automático, estimado o manual): si el
  * registro de esa fecha/ruta ya tiene empresa y valor, se lo salta. Si no
@@ -13,10 +17,10 @@
  *
  * Corre como GitHub Action (ver .github/workflows/actualizacion-diaria.yml),
  * NO dentro de Claude, porque el entorno de Claude no tiene salida a estos
- * sitios. Este script fue escrito a partir de capturas de pantalla de
- * Plataforma 10 y Google Flights, sin poder probarlo en vivo contra los
- * sitios reales — si algo cambió su diseño, va a fallar y hay que ajustarlo
- * (revisá el log de la Action para ver en qué paso se cae).
+ * sitios. La parte de Aerolíneas Argentinas nunca se pudo probar en vivo
+ * (mismo motivo) — si algo de sus selectores no encuentra nada, revisá el
+ * log de la Action (queda diagnóstico completo volcado en cada corrida) y
+ * las capturas "diag_aereo_*" en el artifact de debug.
  *
  * Variables de entorno requeridas: FIREBASE_API_KEY, FIREBASE_PROJECT_ID,
  * ROBOT_EMAIL, ROBOT_PASSWORD.
@@ -63,12 +67,6 @@ const BUS_ROUTES = [
   { code: 'VDM-CABA', ciudad: 'Viedma' },
   { code: 'ROC-CABA', ciudad: 'General Roca' }
 ];
-const AIR_COMPANY_PATTERNS = [
-  { match: /jetsmart/i, name: 'JetSmart' },
-  { match: /flybondi/i, name: 'Flybondi' },
-  { match: /aerol[ií]neas/i, name: 'Aerolíneas Argentinas' }
-];
-
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function recordId(fecha, medio, ruta) { return [fecha, medio, ruta].join('|'); }
 function recordValid(rec) { return !!(rec && rec.empresa && rec.valor !== null && rec.valor !== undefined && rec.valor !== ''); }
@@ -167,46 +165,131 @@ async function marcarSolicitudResuelta(idToken, docName) {
 
 /* ---------- Búsqueda de tarifas ---------- */
 
-function inferAirline(text) {
-  for (const p of AIR_COMPANY_PATTERNS) if (p.match.test(text)) return p.name;
+// Aerolíneas Argentinas es prácticamente la única aerolínea con vuelos
+// regulares a estas 3 ciudades — comprar directo ahí da un precio limpio
+// (sin tarifas de otras fechas ni promociones mezcladas, que era el problema
+// de fondo con Google Flights). Nunca se pudo probar este sitio en vivo
+// (el entorno de Claude no tiene salida a internet general), así que se
+// vuelca diagnóstico completo en cada corrida para poder ajustar selectores
+// con datos reales si algo de esto no encuentra nada.
+async function volcarDiagnostico(page, etiqueta) {
+  try {
+    const inputs = await page.locator('input:visible').evaluateAll(els =>
+      els.slice(0, 25).map(e => ({ placeholder: e.placeholder || null, aria: e.getAttribute('aria-label'), name: e.name || null, type: e.type }))
+    );
+    console.log(`  [diagnóstico ${etiqueta}] inputs visibles: ` + JSON.stringify(inputs));
+    const botones = await page.locator('button:visible, [role="button"]:visible').evaluateAll(els =>
+      els.slice(0, 30).map(e => (e.innerText || e.getAttribute('aria-label') || '').trim()).filter(Boolean)
+    );
+    console.log(`  [diagnóstico ${etiqueta}] botones visibles: ` + JSON.stringify(botones));
+  } catch (err) {
+    console.log(`  [diagnóstico ${etiqueta}] no se pudo levantar: ` + err.message);
+  }
+}
+
+// Busca un campo de texto por varios patrones de nombre/etiqueta posibles
+// (placeholder, aria-label, o texto de un <label> asociado), ya que no se
+// conoce el markup real del sitio de antemano.
+async function ubicarCampoTexto(page, patrones, etiqueta) {
+  for (const p of patrones) {
+    for (const loc of [page.getByPlaceholder(p), page.getByLabel(p), page.getByRole('textbox', { name: p })]) {
+      try {
+        if (await loc.first().isVisible({ timeout: 800 })) {
+          console.log(`  Campo ${etiqueta} encontrado con patrón ${p}.`);
+          return loc.first();
+        }
+      } catch { /* patrón siguiente */ }
+    }
+  }
+  console.log(`  No se encontró el campo ${etiqueta} con ninguno de los patrones probados.`);
   return null;
 }
 
-const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-
-// Google Flights arranca en modo "Ida y vuelta" salvo que se lo cambie a mano
-// en la página; pedirlo en el texto de búsqueda (q=) no alcanza siempre.
-// Si lo detecta, lo cambia a "Solo ida" y espera a que los resultados se
-// actualicen antes de leer precios.
-async function forzarSoloIda(page) {
+async function seleccionarCiudadAerolineas(page, input, texto, etiqueta) {
+  await input.click();
+  await input.fill(texto);
+  const opciones = page.locator('[role="option"], li[class*="suggest" i], li[class*="option" i], li[class*="autocomplete" i]');
   try {
-    const boton = page.getByText('Ida y vuelta', { exact: true }).first();
-    if (await boton.isVisible({ timeout: 4000 })) {
-      await boton.click();
-      await page.getByText('Solo ida', { exact: true }).first().click({ timeout: 4000 });
-      await page.waitForTimeout(2500);
-      console.log('  Cambiado a "Solo ida".');
-      return true;
-    }
+    await opciones.first().waitFor({ state: 'visible', timeout: 4000 });
+    await opciones.first().click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return true;
   } catch {
-    console.log('  Ya estaba en "Solo ida" o no se encontró ese selector.');
+    console.log(`  No aparecieron sugerencias para "${texto}" en ${etiqueta} (Aerolíneas Argentinas).`);
+    return false;
   }
-  return false;
 }
 
-async function buscarAereo(page, ciudad, fechaISO) {
+async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
-  const fechaLegible = `${Number(d)} de ${MESES[Number(m) - 1]} de ${y}`;
-  const q = `vuelos solo ida de ${ciudad} a Buenos Aires el ${fechaLegible}`;
-  const url = 'https://www.google.com/travel/flights?gl=AR&hl=es-419&curr=ARS&q=' + encodeURIComponent(q);
+  const url = 'https://www.aerolineas.com.ar/';
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await cerrarBannerCookies(page);
-  await page.waitForTimeout(4000);
-  await forzarSoloIda(page);
-  const fechaMostrada = await page.locator('text=/^\\w{3}\\.?,? \\d{1,2} \\w+/').first().innerText().catch(() => null);
-  console.log('  Se pidió: ' + fechaLegible + ' | Fecha mostrada en la página: ' + (fechaMostrada || '(no se pudo leer)'));
+  await page.waitForTimeout(2500);
+  console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
+  await volcarDiagnostico(page, 'home');
+  await capturarDebug(page, `diag_aereo_${codigoOrigen}_home`);
+
+  try {
+    // El buscador suele arrancar en "Ida y vuelta"; se fuerza "Solo ida".
+    const soloIda = page.getByText(/^\s*s[oó]lo ida\s*$/i).first();
+    if (await soloIda.count().catch(() => 0)) {
+      await soloIda.click({ timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(500);
+    } else {
+      console.log('  No se encontró el botón "Solo ida" — puede que ya sea el modo por defecto.');
+    }
+
+    const origenInput = await ubicarCampoTexto(page, [/origen/i, /desde/i, /ciudad de origen/i, /salida/i], 'Origen');
+    const destinoInput = await ubicarCampoTexto(page, [/destino/i, /hasta/i, /ciudad de destino/i, /llegada/i], 'Destino');
+    if (!origenInput || !destinoInput) {
+      console.log('  No se pudo ubicar el formulario de búsqueda de Aerolíneas Argentinas.');
+      return null;
+    }
+    await seleccionarCiudadAerolineas(page, origenInput, ciudad, 'Origen');
+    await seleccionarCiudadAerolineas(page, destinoInput, 'Buenos Aires', 'Destino');
+
+    // La fecha puede ser un campo editable (dd/mm/aaaa) o, como en
+    // Plataforma 10, de solo lectura con calendario propio — se intentan
+    // ambos caminos.
+    const diaTexto = String(Number(d));
+    const fechaInput = await ubicarCampoTexto(page, [/fecha de ida/i, /fecha de salida/i, /fecha ida/i], 'Fecha');
+    if (fechaInput) {
+      const esEditable = await fechaInput.isEditable().catch(() => false);
+      if (esEditable) {
+        await fechaInput.fill(`${d}/${m}/${y}`);
+      } else {
+        await fechaInput.click();
+        await page.waitForTimeout(800);
+        await page.locator('button', { hasText: new RegExp('^' + diaTexto + '$') }).first().click({ timeout: 5000 }).catch(async () => {
+          console.log('  No se pudo clickear el día en el calendario de Aerolíneas.');
+          await volcarDiagnostico(page, 'calendario');
+        });
+      }
+    } else {
+      console.log('  No se encontró el campo de fecha — se sigue igual por si ya tiene una fecha válida por defecto.');
+    }
+    await page.waitForTimeout(500);
+    await capturarDebug(page, `diag_aereo_${codigoOrigen}_formulario-completo`);
+
+    const botonBuscar = page.getByRole('button', { name: /buscar/i }).first();
+    await botonBuscar.click({ timeout: 5000 });
+    await page.waitForTimeout(6000);
+  } catch (err) {
+    console.log('  No se pudo completar el formulario de Aerolíneas Argentinas: ' + err.message);
+    await capturarDebug(page, `diag_aereo_${codigoOrigen}_error`);
+    return null;
+  }
+
+  await capturarDebug(page, `diag_aereo_${codigoOrigen}_resultados`);
+  const sinVuelos = page.getByText(/no (hay|encontramos) vuelos|sin disponibilidad/i).first();
+  if (await sinVuelos.isVisible({ timeout: 1000 }).catch(() => false)) {
+    console.log('  La página indica que no hay vuelos disponibles para la fecha pedida.');
+    return null;
+  }
+  await volcarDiagnostico(page, 'resultados');
   const bodyText = await page.locator('body').innerText().catch(() => '');
-  const matches = [...bodyText.matchAll(/ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g)];
+  const matches = [...bodyText.matchAll(/\$\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g)];
   const precios = matches
     .map(mm => ({ valor: Number(mm[0].replace(/[^\d]/g, '')), index: mm.index }))
     .filter(p => Number.isFinite(p.valor) && p.valor > 1000);
@@ -214,9 +297,7 @@ async function buscarAereo(page, ciudad, fechaISO) {
   const ordenados = precios.map(p => p.valor).sort((a, b) => a - b);
   console.log('  Precios detectados (primeros 8): ' + ordenados.slice(0, 8).join(', '));
   const min = precios.reduce((a, b) => (b.valor < a.valor ? b : a));
-  const ventana = bodyText.slice(Math.max(0, min.index - 250), min.index);
-  const aerolinea = inferAirline(ventana) || 'Tarifa más económica (ver fuente)';
-  return { valor: min.valor, empresa: aerolinea, fuente: { texto: 'Google Flights', url } };
+  return { valor: min.valor, empresa: 'Aerolíneas Argentinas', fuente: { texto: 'Aerolíneas Argentinas', url: page.url() } };
 }
 
 async function destildarAlojamiento(page) {
@@ -381,7 +462,7 @@ async function procesarFecha(idToken, browser, fecha) {
 
     let resultado = null;
     try {
-      resultado = r.medio === 'aereo' ? await buscarAereo(page, r.ciudad, fecha) : await buscarTerrestre(page, r.ciudad, fecha);
+      resultado = r.medio === 'aereo' ? await buscarAereo(page, r.ciudad, r.code.split('-')[0], fecha) : await buscarTerrestre(page, r.ciudad, fecha);
     } catch (err) {
       console.log('  Error buscando: ' + err.message);
     }
