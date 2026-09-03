@@ -371,24 +371,29 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
   try {
     await destildarAlojamiento(page);
 
-    const origenInput = await ubicarCampoTexto(page, [/origen/i, /desde/i, /ciudad de origen/i, /ciudad o terminal/i], 'Origen');
-    const destinoInput = await ubicarCampoTexto(page, [/destino/i, /hasta/i, /ciudad de destino/i], 'Destino');
-    if (!origenInput || !destinoInput) {
-      console.log('  No se pudo ubicar el formulario de búsqueda de Central de Pasajes.');
+    // Relevado con diagnóstico en una corrida real (ver diag_terrestre_*):
+    // los campos tienen name="PadOrigen" / "PadDestino" / "fechaPartida" y
+    // el botón de submit es name="btnCons" — mucho más confiable que adivinar
+    // por placeholder (el intento anterior fallaba porque buscaba /hasta/i
+    // y el placeholder real dice "Ingresá hacia dónde viajás").
+    const origenInput = page.locator('input[name="PadOrigen"]');
+    const destinoInput = page.locator('input[name="PadDestino"]');
+    if (!(await origenInput.count().catch(() => 0)) || !(await destinoInput.count().catch(() => 0))) {
+      console.log('  No se encontró el formulario de búsqueda de Central de Pasajes (cambió el markup).');
       return null;
     }
     await seleccionarSugerencia(page, origenInput, ciudad, 'Origen');
     await seleccionarSugerencia(page, destinoInput, 'Retiro', 'Destino');
 
-    // La fecha puede ser un campo editable (dd/mm/aaaa) o de solo lectura con
-    // calendario propio, como pasaba en Plataforma 10 — se intentan ambos.
-    const diaTexto = String(Number(d));
-    const fechaInput = await ubicarCampoTexto(page, [/fecha de ida/i, /fecha partida/i, /fecha de salida/i], 'Fecha');
-    if (fechaInput) {
+    const fechaInput = page.locator('input[name="fechaPartida"]');
+    if (await fechaInput.count().catch(() => 0)) {
+      const diaTexto = String(Number(d));
       const esEditable = await fechaInput.isEditable().catch(() => false);
+      let escrita = false;
       if (esEditable) {
-        await fechaInput.fill(`${d}/${m}/${y}`);
-      } else {
+        try { await fechaInput.fill(`${d}/${m}/${y}`); escrita = true; } catch { /* se prueba con el calendario */ }
+      }
+      if (!escrita) {
         await fechaInput.click();
         await page.waitForTimeout(800);
         await page.locator('button', { hasText: new RegExp('^' + diaTexto + '$') }).first().click({ timeout: 5000 }).catch(async () => {
@@ -397,13 +402,12 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
         });
       }
     } else {
-      console.log('  No se encontró el campo de fecha — se sigue igual por si ya tiene una fecha válida por defecto.');
+      console.log('  No se encontró el campo de fecha (name="fechaPartida") — se sigue igual por si ya tiene una fecha válida por defecto.');
     }
     await page.waitForTimeout(500);
     await capturarDebug(page, `diag_terrestre_${codigoOrigen}_formulario-completo`);
 
-    const botonBuscar = page.getByRole('button', { name: /buscar/i }).first();
-    await botonBuscar.click({ timeout: 5000 });
+    await page.locator('[name="btnCons"]').first().click({ timeout: 5000 });
     await page.waitForTimeout(6000);
   } catch (err) {
     console.log('  No se pudo completar el formulario de Central de Pasajes: ' + err.message);
@@ -436,7 +440,16 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
 /* ---------- Orquestación ---------- */
 
 async function procesarFecha(idToken, browser, fecha) {
-  const page = await browser.newPage({ locale: 'es-AR' });
+  // User-Agent de un Chrome de escritorio real: por defecto Playwright ya
+  // manda uno parecido, pero se fija explícito por si acaso — Aerolíneas
+  // Argentinas devolvió "403 Forbidden" en las 3 rutas en una corrida real
+  // (probablemente bloquea por reputación de IP de datacenter, no por esto),
+  // así que vale la pena descartar esto como causa antes de asumir que es
+  // un bloqueo de red que no se puede arreglar desde acá.
+  const page = await browser.newPage({
+    locale: 'es-AR',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'
+  });
   const rutas = [
     ...AIR_ROUTES.map(r => ({ medio: 'aereo', ...r })),
     ...BUS_ROUTES.map(r => ({ medio: 'terrestre', ...r }))
