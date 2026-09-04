@@ -409,24 +409,39 @@ function renderStatus() {
   const rutas = allRoutesForDate(fecha);
   const pendientes = rutas.filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta)));
 
+  // La búsqueda automática ya no reintenta pasado el día (corre una vez a
+  // las 14hs ART + 3 reintentos hasta ~15:30 ART y ahí se detiene) — lo que
+  // sigue pendiente de AYER cuando arranca un día nuevo ya no se va a
+  // completar solo, así que se avisa acá para que se cargue a mano.
+  const ayer = addDaysStr(fecha, -1);
+  const rutasAyer = allRoutesForDate(ayer);
+  const pendientesAyer = rutasAyer.filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta)));
+
   const banner = document.getElementById('pendingBanner');
-  if (pendientes.length === 0) {
-    banner.innerHTML = '';
-    document.title = 'Pasajes de Referencia SOSUNC';
-  } else {
+  let html = '';
+  if (pendientes.length > 0) {
     const notifBtn = ('Notification' in window && Notification.permission === 'default')
       ? '<button class="btn small secondary" id="btnNotif" type="button">Avisarme en este navegador</button>' : '';
-    banner.innerHTML = '<div class="day-banner crit"><span>Faltan <strong>' + pendientes.length + '</strong> de ' + rutas.length + ' valores de hoy para cerrar el día.</span>' +
+    html += '<div class="day-banner crit"><span>Faltan <strong>' + pendientes.length + '</strong> de ' + rutas.length + ' valores de hoy para cerrar el día.</span>' +
       '<span style="display:flex; gap:8px; flex-wrap:wrap;"><button class="btn small" id="gotoPending" type="button">Cargar hoy</button>' +
       '<button class="btn small secondary" id="btnForzarAuto" type="button">Forzar actualización automática</button>' + notifBtn + '</span></div>';
     document.title = '⚠ Faltan ' + pendientes.length + ' · Pasajes SOSUNC';
+    maybeNotify(pendientes.length);
+  } else {
+    document.title = 'Pasajes de Referencia SOSUNC';
+  }
+  if (pendientesAyer.length > 0) {
+    html += '<div class="day-banner info"><span>Quedaron <strong>' + pendientesAyer.length + '</strong> de ' + rutasAyer.length + ' valores de ayer (' + fmtDateLong(ayer) + ') sin cargar — la búsqueda automática de ese día ya terminó sus reintentos. Hay que completarlos a mano.</span>' +
+      '<span style="display:flex; gap:8px; flex-wrap:wrap;"><button class="btn small" id="gotoPendingYesterday" type="button">Cargar de ayer</button></span></div>';
+  }
+  banner.innerHTML = html;
+  if (pendientes.length > 0) {
     const btnNotif = document.getElementById('btnNotif');
     if (btnNotif) btnNotif.addEventListener('click', async () => {
       const perm = await Notification.requestPermission();
       if (perm === 'granted') { toast('Avisos activados en este navegador.'); new Notification('Pasajes SOSUNC', { body: 'Vas a recibir un aviso acá si quedan valores del día sin cargar.' }); }
     });
     document.getElementById('btnForzarAuto').addEventListener('click', forzarActualizacion);
-    maybeNotify(pendientes.length);
   }
 
   const done = rutas.length - pendientes.length;
@@ -934,8 +949,8 @@ function init() {
   document.getElementById('btnComprobante').addEventListener('click', generarComprobante);
   document.getElementById('btnCompletitud').addEventListener('click', generarCompletitud);
   document.getElementById('pendingBanner').addEventListener('click', e => {
-    if (e.target.id !== 'gotoPending') return;
-    document.getElementById('mFecha').value = todayStr();
+    if (e.target.id !== 'gotoPending' && e.target.id !== 'gotoPendingYesterday') return;
+    document.getElementById('mFecha').value = e.target.id === 'gotoPendingYesterday' ? addDaysStr(todayStr(), -1) : todayStr();
     showView('carga-manual');
     renderManualTable();
     const firstPending = document.querySelector('#manualTbody tr.pending-row .empresa-select');

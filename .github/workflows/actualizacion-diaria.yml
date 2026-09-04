@@ -2,9 +2,16 @@ name: Actualización automática de pasajes
 
 on:
   schedule:
-    # Cada 2 horas: cubre la carga diaria y hace que "Forzar actualización"
-    # desde la página tenga efecto el mismo día (no solo una vez a las 11:00 UTC).
-    - cron: '0 */2 * * *'
+    # Corrida principal a las 14hs Argentina (UTC-3 = 17:00 UTC) + 3 reintentos
+    # cada 30 min hasta las 15:30 ART, para cubrir fallas transitorias de los
+    # sitios de origen (como una ruta sin resultados en una corrida puntual).
+    # Cada corrida solo toca lo que sigue pendiente — la política es no
+    # reintentar más allá de ese día: lo que quede sin cargar se avisa en la
+    # página (banner de "pendientes de ayer") para carga manual obligatoria.
+    - cron: '0 17 * * *'
+    - cron: '30 17 * * *'
+    - cron: '0 18 * * *'
+    - cron: '30 18 * * *'
   workflow_dispatch: {}
 
 jobs:
