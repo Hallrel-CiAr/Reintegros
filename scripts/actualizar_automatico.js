@@ -231,13 +231,25 @@ async function seleccionarSugerencia(page, input, texto, etiqueta, opciones_ = {
   let clicEntroNormal = true;
   await clickTarget.click({ timeout: 5000 }).catch(() => { clicEntroNormal = false; return clickTarget.click({ force: true }); });
   if (opciones_.searchField) {
-    // Diagnóstico específico para el caso Select2 (Central de Pasajes): si
-    // esto vuelve a fallar, esta info dice si el desplegable llegó a abrirse
-    // en el DOM (aunque Playwright no lo considere "visible") o si el clic
-    // no lo abrió en absoluto — sin esto solo sabíamos que el fill() nunca
-    // encontró el campo, no por qué.
-    const abiertos = await page.locator('.select2-container--open').count().catch(() => -1);
-    const camposEnDom = await page.locator('.select2-search__field').count().catch(() => -1);
+    // Diagnóstico específico para el caso Select2 (Central de Pasajes): esta
+    // info dice si el desplegable llegó a abrirse en el DOM (aunque
+    // Playwright no lo considere "visible") o si el clic no lo abrió en
+    // absoluto — sin esto solo sabíamos que el fill() nunca encontró el
+    // campo, no por qué.
+    let abiertos = await page.locator('.select2-container--open').count().catch(() => -1);
+    let camposEnDom = await page.locator('.select2-search__field').count().catch(() => -1);
+    if (abiertos === 0) {
+      // Se vio en una corrida real: el primer campo (Origen) abre bien con
+      // un solo clic, pero el segundo (Destino) no reacciona al mismo clic
+      // — probablemente porque el desplegable de Origen todavía está
+      // cerrando. Se espera un poco y se reintenta una vez con clic forzado
+      // antes de rendirse.
+      console.log(`  [select2 — ${etiqueta}] el desplegable no abrió con el primer clic; se reintenta.`);
+      await page.waitForTimeout(500);
+      await clickTarget.click({ force: true }).catch(() => {});
+      abiertos = await page.locator('.select2-container--open').count().catch(() => -1);
+      camposEnDom = await page.locator('.select2-search__field').count().catch(() => -1);
+    }
     console.log(`  [diagnóstico select2 — ${etiqueta}] clic normal entró: ${clicEntroNormal}; contenedores select2 abiertos: ${abiertos}; campos de búsqueda en el DOM (visibles o no): ${camposEnDom}`);
     await capturarDebug(page, `select2_${etiqueta.replace(/[^a-z0-9]+/gi, '-')}`);
   }
