@@ -490,8 +490,22 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
     await page.waitForTimeout(500);
     await capturarDebug(page, `diag_terrestre_${codigoOrigen}_formulario-completo`);
 
+    // BRC-CABA viene fallando TODOS los días desde que se arregló Select2
+    // (siempre 0 precios y 0 botones, sin el mensaje de "sin servicio") —
+    // mientras las otras 3 rutas cargan bien a diario. Eso apunta a que el
+    // envío nunca navega para esa combinación puntual (algo específico de
+    // esa selección de Origen/Destino), no a que falten servicios ese día.
+    // Se aplica la misma verificación que ya usa Aerolíneas Argentinas: si
+    // la URL no cambia tras el clic, se descarta la página en vez de leerla
+    // como si tuviera resultados vacíos.
+    const urlAntes = page.url();
     await page.locator('[name="btnCons"]').first().click({ timeout: 5000 });
     await page.waitForTimeout(6000);
+    if (page.url() === urlAntes) {
+      console.log('  La URL no cambió después de enviar el formulario de Central de Pasajes — probablemente no se envió. Se descarta esta página.');
+      await capturarDebug(page, `diag_terrestre_${codigoOrigen}_no-navego`);
+      return null;
+    }
   } catch (err) {
     console.log('  No se pudo completar el formulario de Central de Pasajes: ' + err.message);
     await capturarDebug(page, `diag_terrestre_${codigoOrigen}_error`);
@@ -506,6 +520,12 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
   }
   await volcarDiagnostico(page, 'resultados');
   const bodyText = await page.locator('body').innerText().catch(() => '');
+  if (!/\$|ARS/.test(bodyText)) {
+    // Ni precios ni mensaje reconocido de "sin servicio" — para no seguir
+    // adivinando el texto exacto que usa el sitio, se vuelca qué dice
+    // realmente la página en este caso puntual.
+    console.log('  [diagnóstico] La página navegó pero no se detectó ningún "$"/"ARS" en el texto. Título: "' + (await page.title().catch(() => '?')) + '". Primeros 400 caracteres: ' + bodyText.slice(0, 400).replace(/\s+/g, ' '));
+  }
   const matches = bodyText.match(/\$\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g) || [];
   const precios = matches
     .map(s => Number(s.replace(/[^\d]/g, '')))
