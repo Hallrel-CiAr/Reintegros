@@ -1,0 +1,30 @@
+name: Listar registros (revisión de datos cargados)
+
+on:
+  workflow_dispatch:
+    inputs:
+      desde:
+        description: 'Listar registros desde esta fecha (AAAA-MM-DD)'
+        required: false
+        default: '2026-09-01'
+
+jobs:
+  listar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Listar registros
+        working-directory: scripts
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ROBOT_EMAIL: ${{ secrets.ROBOT_EMAIL }}
+          ROBOT_PASSWORD: ${{ secrets.ROBOT_PASSWORD }}
+          DESDE: ${{ inputs.desde }}
+        run: node listar_registros.js
