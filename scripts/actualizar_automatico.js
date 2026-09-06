@@ -513,7 +513,10 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
   }
 
   await capturarDebug(page, `diag_terrestre_${codigoOrigen}_resultados`);
-  const sinServicio = page.getByText(/no (hay|disponemos|encontramos) (servicios|resultados)|sin disponibilidad/i).first();
+  // Central de Pasajes, al menos para Bariloche-CABA, no usa "servicios" ni
+  // "resultados" — dice literalmente "No encontramos opciones para tu
+  // viaje" (se vio en una corrida real, con diagnóstico de página completo).
+  const sinServicio = page.getByText(/no (hay|disponemos|encontramos) (servicios|resultados|opciones)|sin disponibilidad/i).first();
   if (await sinServicio.isVisible({ timeout: 1000 }).catch(() => false)) {
     console.log('  La página indica que no hay servicios para la fecha pedida.');
     return null;
