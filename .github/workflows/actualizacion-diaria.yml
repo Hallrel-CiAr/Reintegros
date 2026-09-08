@@ -2,16 +2,22 @@ name: Actualización automática de pasajes
 
 on:
   schedule:
-    # Corrida principal a las 14hs Argentina (UTC-3 = 17:00 UTC) + 3 reintentos
-    # cada 30 min hasta las 15:30 ART, para cubrir fallas transitorias de los
-    # sitios de origen (como una ruta sin resultados en una corrida puntual).
-    # Cada corrida solo toca lo que sigue pendiente — la política es no
-    # reintentar más allá de ese día: lo que quede sin cargar se avisa en la
-    # página (banner de "pendientes de ayer") para carga manual obligatoria.
-    - cron: '0 17 * * *'
-    - cron: '30 17 * * *'
-    - cron: '0 18 * * *'
-    - cron: '30 18 * * *'
+    # Corrida principal ~14hs Argentina (UTC-3 = 17hs UTC) + 3 reintentos cada
+    # 30 min hasta ~15:30 ART, para cubrir fallas transitorias de los sitios
+    # de origen (como una ruta sin resultados en una corrida puntual). Cada
+    # corrida solo toca lo que sigue pendiente — la política es no reintentar
+    # más allá de ese día: lo que quede sin cargar se avisa en la página
+    # (banner de "pendientes de ayer") para carga manual obligatoria.
+    #
+    # Los minutos NO son :00/:30 a propósito: se vio en corridas reales (7 y
+    # 8/9) que las 4 ventanas en punto se atrasaban varias horas (llegaban a
+    # dispararse recién a la noche) — GitHub documenta que el tope de la hora
+    # y la media hora son los momentos de mayor carga de todo el sistema de
+    # Actions. Correr en :07/:37 evita competir justo en esos picos.
+    - cron: '7 17 * * *'
+    - cron: '37 17 * * *'
+    - cron: '7 18 * * *'
+    - cron: '37 18 * * *'
   workflow_dispatch: {}
 
 jobs:
