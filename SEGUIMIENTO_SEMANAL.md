@@ -70,3 +70,39 @@ ayuda recién con los próximos días — queda anotado para el informe del
 sábado si la demora persiste incluso corriendo en otro minuto.
 
 **Acción:** se avisa al usuario (cambio de código, no solo observación).
+
+---
+
+## 2026-09-09 (miércoles)
+
+**🔴 Anomalía grave: CERO corridas de ningún tipo desde el 7/9 21:42 UTC — no es demora, es silencio total de 2 días.**
+
+Revisado a las 19:06 UTC (16:06 ART). `total_count` de runs del workflow
+sigue en 49 — el mismo número que al cerrar el 7/9. Es decir: en TODO el
+8/9 y lo que va del 9/9 no corrió ni una sola vez, ni programada ni
+manual — a diferencia de días anteriores donde al menos terminaba
+disparándose tarde a la noche.
+
+Se descartó que sea el workflow deshabilitado: `get_workflow` devuelve
+`state: "active"`. Se confirmó que el archivo en `origin/main` tiene bien
+el cron nuevo (commit `8d0c160`, minutos :07/:37). O sea: el cambio de
+minuto de ayer no tuvo ni siquiera la oportunidad de probarse, porque el
+scheduler de GitHub dejó de disparar el workflow por completo, con
+cualquier configuración de cron.
+
+Esto ya no se explica por "pico de carga a horario redondo" (la teoría de
+ayer) — es un corte total. Sospecha sin confirmar: el repo se movió de
+nombre (`reintegros` → `Reintegros`, el aviso "This repository moved"
+aparece en cada push) y es un problema conocido de GitHub que un rename de
+repositorio puede desincronizar el daemon de schedules. No se puede
+confirmar ni arreglar esto desde acá (no hay forma de deshabilitar/rehabilitar
+el workflow vía la API disponible, y no se puede acceder a la config del
+repo en GitHub).
+
+**Impacto real:** el 8/9 y el 9/9 (hoy) probablemente no tienen ninguna
+búsqueda automática — hay que confirmar con el usuario si hizo carga
+manual esos días, o si quedaron pendientes de verdad.
+
+**Acción:** se avisa al usuario con urgencia — esto requiere que dispare
+manual hoy y revise si conviene deshabilitar/rehabilitar el workflow desde
+la interfaz de GitHub para intentar destrabar el scheduler.
