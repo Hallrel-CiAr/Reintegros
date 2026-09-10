@@ -79,7 +79,7 @@ async function signIn() {
     });
     if (getRes.ok) { console.log(`  ${docId}: ya existe, no se toca.`); saltadas++; continue; }
 
-    const putRes = await fetch(`${FIRESTORE_BASE}/rutas/${encodeURIComponent(docId)}?documentId=${encodeURIComponent(docId)}`, {
+    const putRes = await fetch(`${FIRESTORE_BASE}/rutas/${encodeURIComponent(docId)}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
