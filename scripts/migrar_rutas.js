@@ -28,14 +28,18 @@ if (!FIREBASE_API_KEY || !FIREBASE_PROJECT_ID || !ROBOT_EMAIL || !ROBOT_PASSWORD
 const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents`;
 const CREATED_DATE_MIGRACION = '2026-08-31'; // anterior a cualquier fecha ya cargada
 
+// El destino difiere por modo a propósito: es el mismo texto que usaba el
+// sistema viejo de rutas fijas en cada buscador ("CABA" no lo reconoce
+// ningún autocompletado real — se probó en la primera corrida post-migración
+// y las 7 rutas fallaron por eso).
 const RUTAS_A_MIGRAR = [
-  { id: 'NQN-CABA', origen: 'Neuquén', destino: 'CABA', modo: 'aereo' },
-  { id: 'BRC-CABA', origen: 'Bariloche', destino: 'CABA', modo: 'aereo' },
-  { id: 'VDM-CABA', origen: 'Viedma', destino: 'CABA', modo: 'aereo' },
-  { id: 'NQN-CABA', origen: 'Neuquén', destino: 'CABA', modo: 'terrestre' },
-  { id: 'BRC-CABA', origen: 'Bariloche', destino: 'CABA', modo: 'terrestre' },
-  { id: 'VDM-CABA', origen: 'Viedma', destino: 'CABA', modo: 'terrestre' },
-  { id: 'ROC-CABA', origen: 'General Roca', destino: 'CABA', modo: 'terrestre' }
+  { id: 'NQN-CABA', origen: 'Neuquén', destino: 'Buenos Aires', modo: 'aereo' },
+  { id: 'BRC-CABA', origen: 'Bariloche', destino: 'Buenos Aires', modo: 'aereo' },
+  { id: 'VDM-CABA', origen: 'Viedma', destino: 'Buenos Aires', modo: 'aereo' },
+  { id: 'NQN-CABA', origen: 'Neuquén', destino: 'Retiro', modo: 'terrestre' },
+  { id: 'BRC-CABA', origen: 'Bariloche', destino: 'Retiro', modo: 'terrestre' },
+  { id: 'VDM-CABA', origen: 'Viedma', destino: 'Retiro', modo: 'terrestre' },
+  { id: 'ROC-CABA', origen: 'General Roca', destino: 'Retiro', modo: 'terrestre' }
 ];
 
 function jsToFsValue(v) {
