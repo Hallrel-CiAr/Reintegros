@@ -106,3 +106,52 @@ manual esos días, o si quedaron pendientes de verdad.
 **Acción:** se avisa al usuario con urgencia — esto requiere que dispare
 manual hoy y revise si conviene deshabilitar/rehabilitar el workflow desde
 la interfaz de GitHub para intentar destrabar el scheduler.
+
+---
+
+## 2026-09-10 (jueves)
+
+**🔴 El cron sigue sin disparar solo — 3ra vez en 4 días, ahora justo el día del cambio grande de sistema.**
+
+Hoy hubo un cambio grande de sistema (rutas configurables en vez de fijas,
++ 3 modos aéreo/terrestre/vehículo) que de paso cambió el cron de
+`17:07/17:37/18:07/18:37 UTC` a `8:03/8:33/9:03/9:33/10:03 UTC` (5hs ART +
+4 reintentos), commit `dc6b412` mergeado a `main` a las 11:19 UTC (8:19
+ART). Revisando a las 19:05 UTC (16:05 ART), ninguna de las 5 ventanas de
+hoy — ni las 2 anteriores al cambio (8:03/8:33, que corrían con el cron
+viejo igual) ni las 3 posteriores al cambio (9:03/9:33/10:03, ya con el
+cron nuevo) — generó un run con `event: schedule`. `get_workflow` sigue
+devolviendo `state: "active"`. Es el mismo síntoma del 9/9 (silencio
+total), no una demora.
+
+**Importante:** hoy la completitud de datos NO depende de esto — se
+dispararon 2 corridas manuales (`workflow_dispatch`, runs #54 y #55) para
+probar la migración de rutas y corregir un bug de destino (`CABA` no lo
+reconocían los buscadores; se corrigió a `Buenos Aires`/`Retiro` según
+modo, commit `1204a14`). Con esa corrección, 4 de las 7 rutas migradas ya
+cargaron valor real hoy:
+
+| Ruta | Modo | Valor |
+|---|---|---|
+| NQN-CABA | Aéreo | $414.026 (turista) |
+| NQN-CABA | Terrestre | $206.000 (cama, 1 servicio) |
+| ROC-CABA | Terrestre | $189.000 (cama, 1 servicio) |
+| VDM-CABA | Terrestre | $96.500 (cama, promedio 2 servicios) |
+
+Quedaron pendientes (intento 2 de 5, no agotado): BRC-CABA aéreo (no
+encontró sugerencias de autocompletado para "Bariloche" como origen — a
+seguir si persiste), BRC-CABA terrestre y VDM-CABA aéreo (ambos con
+mensaje real de "no hay servicio/vuelo hoy" del propio sitio, no parece
+error de scraping).
+
+Pero si el cron sigue sin disparar solo, esos 3 intentos que le quedaban
+a cada ruta para hoy (hasta agotar sus 5 y recién ahí habilitar carga
+manual) no van a correr — dependen 100% de que alguien dispare manual, lo
+mismo que viene pasando desde el 8/9. Con el sistema nuevo esto pesa más
+que antes: antes una ruta que fallaba tenía 4 reintentos automáticos
+"gratis"; si el scheduler sigue caído, en la práctica hoy son 0.
+
+**Acción:** se avisa al usuario — 3er día con el mismo patrón de scheduler
+caído, ahora coincidiendo con el estreno del cron nuevo, y con impacto
+directo en el mecanismo de reintentos/agotamiento del sistema recién
+rediseñado.
