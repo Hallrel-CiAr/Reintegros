@@ -2,31 +2,31 @@ name: Actualización automática de pasajes
 
 on:
   schedule:
-    # Corrida principal ~14hs Argentina (UTC-3 = 17hs UTC) + 3 reintentos cada
-    # 30 min hasta ~15:30 ART, para cubrir fallas transitorias de los sitios
-    # de origen (como una ruta sin resultados en una corrida puntual). Cada
-    # corrida solo toca lo que sigue pendiente — la política es no reintentar
-    # más allá de ese día: lo que quede sin cargar se avisa en la página
-    # (banner de "pendientes de ayer") para carga manual obligatoria.
+    # Corrida principal a las 5hs Argentina (UTC-3 = 8hs UTC) + 4 reintentos
+    # cada 30 min hasta las 7hs ART (5 intentos en total por día — ver
+    # MAX_INTENTOS en actualizar_automatico.js). Cada corrida es UN intento:
+    # si una ruta no encuentra valor, el script anota el intento y recién al
+    # 5º sin éxito la marca "agotada" — ahí, y solo ahí, la página habilita
+    # la carga manual para esa fecha/ruta puntual.
     #
-    # Los minutos NO son :00/:30 a propósito: se vio en corridas reales (7 y
-    # 8/9) que las 4 ventanas en punto se atrasaban varias horas (llegaban a
-    # dispararse recién a la noche) — GitHub documenta que el tope de la hora
-    # y la media hora son los momentos de mayor carga de todo el sistema de
-    # Actions. Correr en :07/:37 evita competir justo en esos picos.
-    - cron: '7 17 * * *'
-    - cron: '37 17 * * *'
-    - cron: '7 18 * * *'
-    - cron: '37 18 * * *'
+    # Los minutos NO son :00/:30 a propósito: se vio en corridas reales que
+    # las ventanas en punto se atrasaban varias horas — GitHub documenta que
+    # el tope de la hora y la media hora son los momentos de mayor carga de
+    # todo el sistema de Actions. Correr en :03/:33 evita competir ahí.
+    - cron: '3 8 * * *'
+    - cron: '33 8 * * *'
+    - cron: '3 9 * * *'
+    - cron: '33 9 * * *'
+    - cron: '3 10 * * *'
   workflow_dispatch: {}
 
 jobs:
   actualizar:
     runs-on: ubuntu-latest
-    # La corrida del 3/9 tardó 19:49 (al límite de 20) por lentitud real del
-    # sitio tras varias búsquedas seguidas. Se sube más todavía mientras se
-    # estabiliza el scraper nuevo de Aerolíneas Argentinas (agrega capturas y
-    # diagnóstico extra); una vez que ande bien se puede bajar de nuevo.
+    # 40 min de margen: además de Aerolíneas Argentinas y Central de Pasajes
+    # (que ya sacan capturas y diagnóstico en cada corrida), ahora corre
+    # también el scraper nuevo de Ruta0 (modo "vehículo"), que puede ser más
+    # lento hasta que se termine de ajustar con datos de corridas reales.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4

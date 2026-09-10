@@ -44,6 +44,14 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Rutas configuradas a mano (origen, destino, modo) que la búsqueda
+    // automática recorre cada día. Cualquier persona logueada puede verlas;
+    // solo el dueño y las personas autorizadas pueden agregar o borrar.
+    match /rutas/{rutaId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || isEditor();
+    }
+
     // Pedidos de "Forzar actualización automática" desde la página. La
     // cuenta robot de la búsqueda diaria (agregada como editora más) los lee
     // y los marca resueltos; no puede borrarlos.

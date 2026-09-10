@@ -2,28 +2,39 @@
 /*
  * Búsqueda diaria automática de valores de referencia de pasajes (SOSUNC).
  *
- * Terrestre (Central de Pasajes, centraldepasajes.com.ar): promedio de los
- * precios de los servicios listados para la fecha y ruta. Reemplaza a
- * Plataforma 10, que daba valores correctos pero cada vez más lentos
- * (throttling tras varias búsquedas seguidas).
- * Aéreo (Aerolíneas Argentinas, aerolineas.com.ar): la tarifa más económica
- * encontrada. Se eligió por ser la única aerolínea con vuelos regulares a
- * estas 3 ciudades — comprar directo en su sitio da un precio limpio, sin
- * las tarifas de otras fechas o promociones mezcladas que contaminaban la
- * lectura cuando se scrapeaba Google Flights.
+ * Las rutas YA NO son una lista fija en este archivo: se leen de la
+ * colección "rutas" de Firestore (cada una configurada a mano desde la
+ * página, con origen/destino/modo). Una ruta solo se procesa a partir del
+ * día SIGUIENTE a que se creó (ruta.createdDate).
  *
- * Nunca pisa un valor ya cargado (automático, estimado o manual): si el
- * registro de esa fecha/ruta ya tiene empresa y valor, se lo salta. Si no
- * puede confirmar un valor con la fuente, lo deja pendiente en vez de
- * inventarlo.
+ * Por cada modo:
+ *   - "aereo": Aerolíneas Argentinas (aerolineas.com.ar) — tarifa turista
+ *     más económica encontrada.
+ *   - "terrestre": Central de Pasajes (centraldepasajes.com.ar) — valor del
+ *     asiento cama/cama ejecutivo (promedio si hay varios); si esa clase no
+ *     aparece en los resultados, se usa el mayor valor encontrado entre
+ *     todos los servicios listados.
+ *   - "vehiculo": Ruta0 (ruta0.com) — costo estimado de combustible
+ *     (10 litros de nafta súper cada 100km, mismo criterio que se usa como
+ *     referencia manual) para la distancia de la ruta.
+ *
+ * Reintentos: cada corrida es UN intento (la Action corre a las 5hs ART y
+ * 4 veces más cada 30 min = 5 intentos por día, ver el cron del workflow).
+ * Si al 5º intento del día sigue sin poder confirmar un valor, el registro
+ * queda con agotado:true — recién ahí la página habilita la carga manual
+ * para esa fecha/ruta puntual (antes de eso no se ofrece esa opción).
+ * Nunca pisa un valor ya cargado (automático o manual): si el registro de
+ * esa fecha/ruta ya tiene empresa y valor, se lo salta.
  *
  * Corre como GitHub Action (ver .github/workflows/actualizacion-diaria.yml),
  * NO dentro de Claude, porque el entorno de Claude no tiene salida a estos
- * sitios. Ni Aerolíneas Argentinas ni Central de Pasajes se pudieron probar
- * en vivo (mismo motivo) — si algo de sus selectores no encuentra nada,
- * revisá el log de la Action (queda diagnóstico completo volcado en cada
- * corrida) y las capturas "diag_aereo_*" / "diag_terrestre_*" del artifact
- * de debug.
+ * sitios. Ninguno de los 3 sitios se pudo probar en vivo desde ahí — si
+ * algo de sus selectores no encuentra nada, revisá el log de la Action
+ * (queda diagnóstico completo volcado en cada corrida) y las capturas
+ * "diag_*" del artifact de debug. El scraper de "vehiculo" (Ruta0) es el
+ * más nuevo de los tres y el que más probablemente necesite un ajuste con
+ * datos de una corrida real, como pasó antes con Aerolíneas y Central de
+ * Pasajes.
  *
  * Variables de entorno requeridas: FIREBASE_API_KEY, FIREBASE_PROJECT_ID,
  * ROBOT_EMAIL, ROBOT_PASSWORD.
@@ -58,18 +69,8 @@ if (!FIREBASE_API_KEY || !FIREBASE_PROJECT_ID || !ROBOT_EMAIL || !ROBOT_PASSWORD
 }
 
 const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents`;
+const MAX_INTENTOS = 5;
 
-const AIR_ROUTES = [
-  { code: 'NQN-CABA', ciudad: 'Neuquén' },
-  { code: 'BRC-CABA', ciudad: 'Bariloche' },
-  { code: 'VDM-CABA', ciudad: 'Viedma' }
-];
-const BUS_ROUTES = [
-  { code: 'NQN-CABA', ciudad: 'Neuquén' },
-  { code: 'BRC-CABA', ciudad: 'Bariloche' },
-  { code: 'VDM-CABA', ciudad: 'Viedma' },
-  { code: 'ROC-CABA', ciudad: 'General Roca' }
-];
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function recordId(fecha, medio, ruta) { return [fecha, medio, ruta].join('|'); }
 function recordValid(rec) { return !!(rec && rec.empresa && rec.valor !== null && rec.valor !== undefined && rec.valor !== ''); }
@@ -92,6 +93,7 @@ function fsValueToJs(v) {
   if (v.stringValue !== undefined) return v.stringValue;
   if (v.doubleValue !== undefined) return v.doubleValue;
   if (v.integerValue !== undefined) return Number(v.integerValue);
+  if (v.booleanValue !== undefined) return v.booleanValue;
   if (v.nullValue !== undefined) return null;
   if (v.mapValue) return fsMapToJs(v.mapValue);
   return null;
@@ -106,6 +108,7 @@ function jsToFsValue(v) {
   if (v === null || v === undefined) return { nullValue: null };
   if (typeof v === 'string') return { stringValue: v };
   if (typeof v === 'number') return { doubleValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
   if (typeof v === 'object') return { mapValue: { fields: jsToFsFields(v) } };
   throw new Error('Tipo no soportado: ' + typeof v);
 }
@@ -142,6 +145,19 @@ async function writeHistoryEntry(idToken, entry) {
   if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + await res.text());
 }
 
+async function obtenerRutas(idToken) {
+  const res = await fetch(`${FIRESTORE_BASE}:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'rutas' }] } })
+  });
+  if (!res.ok) { console.log('No se pudieron leer las rutas configuradas: HTTP ' + res.status); return []; }
+  const rows = await res.json();
+  return (rows || [])
+    .filter(r => r.document)
+    .map(r => ({ id: r.document.name.split('/').pop(), ...fsMapToJs(r.document) }));
+}
+
 async function obtenerSolicitudesPendientes(idToken) {
   const res = await fetch(`${FIRESTORE_BASE}:runQuery`, {
     method: 'POST',
@@ -168,13 +184,6 @@ async function marcarSolicitudResuelta(idToken, docName) {
 
 /* ---------- Búsqueda de tarifas ---------- */
 
-// Aerolíneas Argentinas es prácticamente la única aerolínea con vuelos
-// regulares a estas 3 ciudades — comprar directo ahí da un precio limpio
-// (sin tarifas de otras fechas ni promociones mezcladas, que era el problema
-// de fondo con Google Flights). Nunca se pudo probar este sitio en vivo
-// (el entorno de Claude no tiene salida a internet general), así que se
-// vuelca diagnóstico completo en cada corrida para poder ajustar selectores
-// con datos reales si algo de esto no encuentra nada.
 async function volcarDiagnostico(page, etiqueta) {
   try {
     const inputs = await page.locator('input:visible').evaluateAll(els =>
@@ -190,9 +199,6 @@ async function volcarDiagnostico(page, etiqueta) {
   }
 }
 
-// Busca un campo de texto por varios patrones de nombre/etiqueta posibles
-// (placeholder, aria-label, o texto de un <label> asociado), ya que no se
-// conoce el markup real del sitio de antemano.
 async function ubicarCampoTexto(page, patrones, etiqueta) {
   for (const p of patrones) {
     for (const loc of [page.getByPlaceholder(p), page.getByLabel(p), page.getByRole('textbox', { name: p })]) {
@@ -214,36 +220,14 @@ async function ubicarCampoTexto(page, patrones, etiqueta) {
 // contiene lo buscado (por si aparecen resultados mezclados) y, si no
 // aparece ninguna sugerencia visible, cae a navegar con el teclado.
 async function seleccionarSugerencia(page, input, texto, etiqueta, opciones_ = {}) {
-  // Algunos sitios (Central de Pasajes) esconden el input real detrás de un
-  // widget (Select2) que intercepta los clics normales — Playwright espera
-  // 30s a que "deje de estar tapado" y nunca pasa. Si el clic normal no
-  // entra en 5s, se fuerza (ignora la comprobación de que esté tapado).
-  // clickTarget: si el elemento clickeable para ABRIR el desplegable es
-  // distinto del input real (típico de Select2, que renderiza su propio
-  // widget visual encima de un <input>/<select> oculto), se puede pasar por
-  // separado. searchField: Select2 además arma, al abrir el desplegable, un
-  // campo de búsqueda PROPIO (.select2-search__field) donde hay que escribir
-  // — escribir en el input oculto original no hace nada (se vio en una
-  // captura real: el campo quedaba vacío y el sitio pedía completarlo, aunque
-  // el código ya le había hecho fill()).
   const clickTarget = opciones_.clickTarget || input;
   const campoTexto = opciones_.searchField || input;
   let clicEntroNormal = true;
   await clickTarget.click({ timeout: 5000 }).catch(() => { clicEntroNormal = false; return clickTarget.click({ force: true }); });
   if (opciones_.searchField) {
-    // Diagnóstico específico para el caso Select2 (Central de Pasajes): esta
-    // info dice si el desplegable llegó a abrirse en el DOM (aunque
-    // Playwright no lo considere "visible") o si el clic no lo abrió en
-    // absoluto — sin esto solo sabíamos que el fill() nunca encontró el
-    // campo, no por qué.
     let abiertos = await page.locator('.select2-container--open').count().catch(() => -1);
     let camposEnDom = await page.locator('.select2-search__field').count().catch(() => -1);
     if (abiertos === 0) {
-      // Se vio en una corrida real: el primer campo (Origen) abre bien con
-      // un solo clic, pero el segundo (Destino) no reacciona al mismo clic
-      // — probablemente porque el desplegable de Origen todavía está
-      // cerrando. Se espera un poco y se reintenta una vez con clic forzado
-      // antes de rendirse.
       console.log(`  [select2 — ${etiqueta}] el desplegable no abrió con el primer clic; se reintenta.`);
       await page.waitForTimeout(500);
       await clickTarget.click({ force: true }).catch(() => {});
@@ -285,7 +269,7 @@ async function seleccionarSugerencia(page, input, texto, etiqueta, opciones_ = {
   return seleccionado || !!valorFinal.trim();
 }
 
-async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
+async function buscarAereo(page, origen, destino, codigo, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
   const url = 'https://www.aerolineas.com.ar/';
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -293,14 +277,11 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
   await page.waitForTimeout(2500);
   console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
   await volcarDiagnostico(page, 'home');
-  await capturarDebug(page, `diag_aereo_${codigoOrigen}_home`);
+  await capturarDebug(page, `diag_aereo_${codigo}_home`);
 
   try {
-    // El buscador arranca en "Ida y vuelta" — el radio para cambiarlo dice
-    // simplemente "Ida" (no "Solo ida", como se asumía antes; se vio en una
-    // captura real). Sin este cambio, el formulario también exige fecha de
-    // regreso y rechaza el envío con "Ingresa una fecha válida" aunque la
-    // fecha de ida esté bien completada.
+    // El buscador arranca en "Ida y vuelta" — el radio para pasar a solo ida
+    // dice simplemente "Ida" (visto en una captura real).
     const soloIda = page.getByText('Ida', { exact: true }).first();
     if (await soloIda.count().catch(() => 0)) {
       await soloIda.click({ timeout: 3000 }).catch(() => {});
@@ -315,52 +296,43 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
       console.log('  No se pudo ubicar el formulario de búsqueda de Aerolíneas Argentinas.');
       return null;
     }
-    await seleccionarSugerencia(page, origenInput, ciudad, 'Origen');
-    await seleccionarSugerencia(page, destinoInput, 'Buenos Aires', 'Destino');
+    await seleccionarSugerencia(page, origenInput, origen, 'Origen', {});
+    await seleccionarSugerencia(page, destinoInput, destino, 'Destino', {});
 
-    // Relevado con diagnóstico en una corrida real: el campo de fecha de ida
-    // tiene name="from-date" (placeholder "dd/mm/aaaa") — el intento anterior
-    // no lo encontraba (buscaba /fecha de ida/i, que no matchea nada de eso),
-    // así que el formulario quedaba sin fecha y "Buscar vuelos" no navegaba a
-    // ningún lado: lo que se leía después eran precios promocionales de la
-    // portada, no tarifas reales (se vio en una corrida real: las 3 rutas
-    // guardaron exactamente el mismo precio).
+    // El campo de fecha de ida tiene name="from-date" (placeholder "dd/mm/aaaa").
     const fechaInput = page.locator('input[name="from-date"]');
     if (await fechaInput.count().catch(() => 0)) {
       await fechaInput.fill(`${d}/${m}/${y}`).catch(async err => {
         console.log('  No se pudo completar la fecha de Aerolíneas Argentinas: ' + err.message);
       });
-      // Escribir la fecha suele abrir un calendario propio encima del
-      // formulario; si queda abierto tapa el botón "Buscar vuelos" (se vio
-      // en una corrida real: el clic ahí tiraba timeout). Se cierra con
-      // Escape y, por las dudas, con un clic afuera del campo.
+      // Escribir la fecha suele abrir un calendario propio que puede tapar el
+      // botón "Buscar vuelos" — se cierra con Escape y un clic afuera.
       await page.keyboard.press('Escape').catch(() => {});
       await page.locator('body').click({ position: { x: 5, y: 5 }, timeout: 2000 }).catch(() => {});
     } else {
       console.log('  No se encontró el campo de fecha (name="from-date") — se sigue igual por si ya tiene una fecha válida por defecto.');
     }
     await page.waitForTimeout(500);
-    await capturarDebug(page, `diag_aereo_${codigoOrigen}_formulario-completo`);
+    await capturarDebug(page, `diag_aereo_${codigo}_formulario-completo`);
 
     const urlAntes = page.url();
     const botonBuscar = page.getByRole('button', { name: /buscar/i }).first();
     await botonBuscar.click({ timeout: 5000 }).catch(() => botonBuscar.click({ force: true }));
     await page.waitForTimeout(6000);
-    // Si la URL no cambió, lo más probable es que el formulario no se haya
-    // enviado (por ejemplo por falta de fecha) y seguimos en la portada — los
-    // precios que se leerían ahí son promocionales, no de la ruta buscada.
+    // Si la URL no cambió, el formulario probablemente no se envió — los
+    // precios que se leerían ahí serían promocionales, no de la ruta buscada.
     if (page.url() === urlAntes) {
       console.log('  La URL no cambió después de "Buscar vuelos" — probablemente el formulario no se envió. Se descarta cualquier precio de esta página.');
-      await capturarDebug(page, `diag_aereo_${codigoOrigen}_no-navego`);
+      await capturarDebug(page, `diag_aereo_${codigo}_no-navego`);
       return null;
     }
   } catch (err) {
     console.log('  No se pudo completar el formulario de Aerolíneas Argentinas: ' + err.message);
-    await capturarDebug(page, `diag_aereo_${codigoOrigen}_error`);
+    await capturarDebug(page, `diag_aereo_${codigo}_error`);
     return null;
   }
 
-  await capturarDebug(page, `diag_aereo_${codigoOrigen}_resultados`);
+  await capturarDebug(page, `diag_aereo_${codigo}_resultados`);
   const sinVuelos = page.getByText(/no (hay|encontramos) vuelos|sin disponibilidad/i).first();
   if (await sinVuelos.isVisible({ timeout: 1000 }).catch(() => false)) {
     console.log('  La página indica que no hay vuelos disponibles para la fecha pedida.');
@@ -368,6 +340,9 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
   }
   await volcarDiagnostico(page, 'resultados');
   const bodyText = await page.locator('body').innerText().catch(() => '');
+  // El resultado por defecto de Aerolíneas es clase Económica/Turista (no
+  // hay selector de clase en el buscador simple), así que la tarifa que se
+  // lee acá ya corresponde a "valor turista".
   const matches = [...bodyText.matchAll(/\$\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g)];
   const precios = matches
     .map(mm => ({ valor: Number(mm[0].replace(/[^\d]/g, '')), index: mm.index }))
@@ -376,13 +351,12 @@ async function buscarAereo(page, ciudad, codigoOrigen, fechaISO) {
   const ordenados = precios.map(p => p.valor).sort((a, b) => a - b);
   console.log('  Precios detectados (primeros 8): ' + ordenados.slice(0, 8).join(', '));
   const min = precios.reduce((a, b) => (b.valor < a.valor ? b : a));
-  return { valor: min.valor, empresa: 'Aerolíneas Argentinas', fuente: { texto: 'Aerolíneas Argentinas', url: page.url() } };
+  return { valor: min.valor, empresa: 'Aerolíneas Argentinas (turista)', fuente: { texto: 'Aerolíneas Argentinas', url: page.url() } };
 }
 
 async function destildarAlojamiento(page) {
   // El buscador tilda "Quiero buscar alojamiento" por defecto: si queda
-  // tildado, "Buscar pasajes" manda a resultados de hoteles (Booking) en
-  // vez de resultados de micros, aunque el resto del formulario esté bien.
+  // tildado, "Buscar pasajes" manda a resultados de hoteles en vez de micros.
   try {
     const porRol = page.getByRole('checkbox', { name: /alojamiento/i });
     const n = await porRol.count().catch(() => 0);
@@ -393,8 +367,6 @@ async function destildarAlojamiento(page) {
       }
     }
     if (n === 0) {
-      // El checkbox puede no tener "nombre accesible" (aria) armado: se
-      // busca por el texto de la etiqueta y se destilda el input más cercano.
       const etiqueta = page.locator('label, span, div').filter({ hasText: /quiero buscar alojamiento/i }).first();
       if (await etiqueta.count().catch(() => 0)) {
         const caja = etiqueta.locator('input[type="checkbox"]').first();
@@ -406,12 +378,7 @@ async function destildarAlojamiento(page) {
   } catch { /* si no aparece el checkbox en esta versión de la página, no hay nada que destildar */ }
 }
 
-// Plataforma 10 daba valores correctos pero cada vez más lentos (throttling
-// tras varias búsquedas seguidas — una corrida llegó a tardar 7 min por
-// ruta). Se prueba Central de Pasajes como alternativa. Igual que con
-// Aerolíneas Argentinas, nunca se pudo probar este sitio en vivo, así que
-// se vuelca el mismo diagnóstico completo en cada corrida.
-async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
+async function buscarTerrestre(page, origen, destino, codigo, fechaISO) {
   const [y, m, d] = fechaISO.split('-');
   const url = 'https://www.centraldepasajes.com.ar/';
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -419,29 +386,17 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
   await page.waitForTimeout(2000);
   console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
   await volcarDiagnostico(page, 'home');
-  await capturarDebug(page, `diag_terrestre_${codigoOrigen}_home`);
+  await capturarDebug(page, `diag_terrestre_${codigo}_home`);
 
   try {
     await destildarAlojamiento(page);
 
-    // Relevado con diagnóstico en una corrida real (ver diag_terrestre_*):
-    // los campos tienen name="PadOrigen" / "PadDestino" / "fechaPartida" y
-    // el botón de submit es name="btnCons" — mucho más confiable que adivinar
-    // por placeholder (el intento anterior fallaba porque buscaba /hasta/i
-    // y el placeholder real dice "Ingresá hacia dónde viajás").
     const origenInput = page.locator('input[name="PadOrigen"]');
     const destinoInput = page.locator('input[name="PadDestino"]');
     if (!(await origenInput.count().catch(() => 0)) || !(await destinoInput.count().catch(() => 0))) {
       console.log('  No se encontró el formulario de búsqueda de Central de Pasajes (cambió el markup).');
       return null;
     }
-    // El input real queda oculto detrás del widget visual que arma Select2
-    // (patrón típico: un <span id="select2-<name>-container"> al lado del
-    // input) — hay que clickear ESE elemento para que abra el desplegable de
-    // sugerencias, clickear el input escondido no lo dispara aunque el clic
-    // en sí entre (se vio en una corrida real: el clic ya no tira timeout,
-    // pero nunca aparecen sugerencias). Si no existe ese contenedor, se cae
-    // al input con clic forzado como antes.
     const origenVisual = page.locator('#select2-PadOrigen-container');
     const destinoVisual = page.locator('#select2-PadDestino-container');
     if (!(await origenVisual.count().catch(() => 0))) {
@@ -449,21 +404,14 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
       const html = await origenInput.evaluate(el => el.closest('div,span')?.outerHTML?.slice(0, 1500) || el.outerHTML).catch(() => null);
       console.log('  [diagnóstico] HTML cerca de PadOrigen: ' + html);
     }
-    // El campo de búsqueda que Select2 arma al abrir el desplegable es el
-    // mismo para cualquier instancia de la página (se reutiliza) — como
-    // Origen y Destino se completan uno por vez, ":visible" siempre apunta
-    // al que está realmente abierto en ese momento. Solo se usa cuando
-    // realmente se pudo clickear el widget visual — si se cayó al input
-    // escondido (fallback), no hay desplegable Select2 abierto y ese campo
-    // de búsqueda no existiría.
     const campoBusquedaSelect2 = page.locator('.select2-search__field:visible').first();
     const hayOrigenVisual = await origenVisual.count().catch(() => 0);
     const hayDestinoVisual = await destinoVisual.count().catch(() => 0);
-    await seleccionarSugerencia(page, origenInput, ciudad, `Origen ${codigoOrigen}`, {
+    await seleccionarSugerencia(page, origenInput, origen, `Origen ${codigo}`, {
       clickTarget: hayOrigenVisual ? origenVisual : origenInput,
       searchField: hayOrigenVisual ? campoBusquedaSelect2 : undefined
     });
-    await seleccionarSugerencia(page, destinoInput, 'Retiro', `Destino ${codigoOrigen}`, {
+    await seleccionarSugerencia(page, destinoInput, destino, `Destino ${codigo}`, {
       clickTarget: hayDestinoVisual ? destinoVisual : destinoInput,
       searchField: hayDestinoVisual ? campoBusquedaSelect2 : undefined
     });
@@ -488,34 +436,23 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
       console.log('  No se encontró el campo de fecha (name="fechaPartida") — se sigue igual por si ya tiene una fecha válida por defecto.');
     }
     await page.waitForTimeout(500);
-    await capturarDebug(page, `diag_terrestre_${codigoOrigen}_formulario-completo`);
+    await capturarDebug(page, `diag_terrestre_${codigo}_formulario-completo`);
 
-    // BRC-CABA viene fallando TODOS los días desde que se arregló Select2
-    // (siempre 0 precios y 0 botones, sin el mensaje de "sin servicio") —
-    // mientras las otras 3 rutas cargan bien a diario. Eso apunta a que el
-    // envío nunca navega para esa combinación puntual (algo específico de
-    // esa selección de Origen/Destino), no a que falten servicios ese día.
-    // Se aplica la misma verificación que ya usa Aerolíneas Argentinas: si
-    // la URL no cambia tras el clic, se descarta la página en vez de leerla
-    // como si tuviera resultados vacíos.
     const urlAntes = page.url();
     await page.locator('[name="btnCons"]').first().click({ timeout: 5000 });
     await page.waitForTimeout(6000);
     if (page.url() === urlAntes) {
       console.log('  La URL no cambió después de enviar el formulario de Central de Pasajes — probablemente no se envió. Se descarta esta página.');
-      await capturarDebug(page, `diag_terrestre_${codigoOrigen}_no-navego`);
+      await capturarDebug(page, `diag_terrestre_${codigo}_no-navego`);
       return null;
     }
   } catch (err) {
     console.log('  No se pudo completar el formulario de Central de Pasajes: ' + err.message);
-    await capturarDebug(page, `diag_terrestre_${codigoOrigen}_error`);
+    await capturarDebug(page, `diag_terrestre_${codigo}_error`);
     return null;
   }
 
-  await capturarDebug(page, `diag_terrestre_${codigoOrigen}_resultados`);
-  // Central de Pasajes, al menos para Bariloche-CABA, no usa "servicios" ni
-  // "resultados" — dice literalmente "No encontramos opciones para tu
-  // viaje" (se vio en una corrida real, con diagnóstico de página completo).
+  await capturarDebug(page, `diag_terrestre_${codigo}_resultados`);
   const sinServicio = page.getByText(/no (hay|disponemos|encontramos) (servicios|resultados|opciones)|sin disponibilidad/i).first();
   if (await sinServicio.isVisible({ timeout: 1000 }).catch(() => false)) {
     console.log('  La página indica que no hay servicios para la fecha pedida.');
@@ -524,75 +461,225 @@ async function buscarTerrestre(page, ciudad, codigoOrigen, fechaISO) {
   await volcarDiagnostico(page, 'resultados');
   const bodyText = await page.locator('body').innerText().catch(() => '');
   if (!/\$|ARS/.test(bodyText)) {
-    // Ni precios ni mensaje reconocido de "sin servicio" — para no seguir
-    // adivinando el texto exacto que usa el sitio, se vuelca qué dice
-    // realmente la página en este caso puntual.
     console.log('  [diagnóstico] La página navegó pero no se detectó ningún "$"/"ARS" en el texto. Título: "' + (await page.title().catch(() => '?')) + '". Primeros 400 caracteres: ' + bodyText.slice(0, 400).replace(/\s+/g, ' '));
   }
-  const matches = bodyText.match(/\$\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g) || [];
+
+  // Se pide específicamente el valor de asiento CAMA/CAMA EJECUTIVO (no el
+  // promedio de todas las clases como antes). Como no se conoce la
+  // estructura exacta de cada tarjeta de servicio, se aproxima mirando si
+  // la palabra "cama" aparece cerca (antes) de cada precio detectado en el
+  // texto de la página — así no depende de un selector CSS puntual que
+  // nunca se pudo confirmar en vivo. Si ningún precio queda marcado como
+  // "cama", se usa el mayor valor encontrado entre todos los servicios,
+  // como pidió el usuario.
+  const priceRe = /\$\s?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|ARS\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g;
+  const matches = [...bodyText.matchAll(priceRe)];
   const precios = matches
-    .map(s => Number(s.replace(/[^\d]/g, '')))
-    .filter(n => Number.isFinite(n) && n > 1000);
+    .map(mm => {
+      const valor = Number(mm[0].replace(/[^\d]/g, ''));
+      const antes = bodyText.slice(Math.max(0, mm.index - 200), mm.index);
+      const esCama = /cama\s*ejecutiv[oa]|\bcama\b/i.test(antes);
+      return { valor, esCama };
+    })
+    .filter(p => Number.isFinite(p.valor) && p.valor > 1000);
   if (!precios.length) return null;
-  console.log('  Precios detectados: ' + precios.join(', '));
-  const promedio = Math.round(precios.reduce((a, b) => a + b, 0) / precios.length);
+  console.log('  Precios detectados: ' + precios.map(p => p.valor + (p.esCama ? '(cama)' : '')).join(', '));
+  const camaPrecios = precios.filter(p => p.esCama).map(p => p.valor);
+  if (camaPrecios.length) {
+    const promedio = Math.round(camaPrecios.reduce((a, b) => a + b, 0) / camaPrecios.length);
+    return {
+      valor: promedio,
+      empresa: 'Cama/Cama Ejecutivo (Central de Pasajes, promedio de ' + camaPrecios.length + ' servicio' + (camaPrecios.length === 1 ? '' : 's') + ')',
+      fuente: { texto: 'Central de Pasajes', url: page.url() }
+    };
+  }
+  const mayor = Math.max(...precios.map(p => p.valor));
   return {
-    valor: promedio,
-    empresa: 'Promedio (Central de Pasajes, ' + precios.length + ' servicio' + (precios.length === 1 ? '' : 's') + ')',
+    valor: mayor,
+    empresa: 'Mayor valor encontrado (Central de Pasajes, sin clase cama en los resultados)',
     fuente: { texto: 'Central de Pasajes', url: page.url() }
   };
 }
 
+// Ruta0 (ruta0.com): sitio de cálculo de distancias y costo de viaje en auto
+// — nunca se pudo probar en vivo, así que se vuelca el mismo diagnóstico
+// completo que ya sirvió para ajustar Aerolíneas y Central de Pasajes.
+// Costo = distancia (km) / 100 × 10 litros × precio del litro de nafta
+// súper que muestre la propia página — mismo criterio usado como referencia
+// manual (10 L/100km).
+const CONSUMO_L_CADA_100KM = 10;
+async function buscarVehiculo(page, origen, destino, codigo) {
+  const url = 'https://www.ruta0.com/';
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(async () => {
+    await page.goto('https://ruta0.com/', { waitUntil: 'domcontentloaded', timeout: 45000 });
+  });
+  await cerrarBannerCookies(page);
+  await page.waitForTimeout(1500);
+  console.log('  Página cargada: "' + (await page.title().catch(() => '?')) + '"');
+  await volcarDiagnostico(page, 'home');
+  await capturarDebug(page, `diag_vehiculo_${codigo}_home`);
+
+  try {
+    const origenInput = await ubicarCampoTexto(page, [/origen/i, /desde/i, /punto de partida/i, /salida/i, /ciudad/i], 'Origen');
+    const destinoInput = await ubicarCampoTexto(page, [/destino/i, /hasta/i, /punto de llegada/i, /llegada/i], 'Destino');
+    if (!origenInput || !destinoInput) {
+      console.log('  No se pudo ubicar el formulario de Ruta0.');
+      return null;
+    }
+    await origenInput.click({ timeout: 3000 }).catch(() => {});
+    await origenInput.fill(origen);
+    await page.waitForTimeout(700);
+    await page.keyboard.press('ArrowDown').catch(() => {});
+    await page.keyboard.press('Enter').catch(() => {});
+    await destinoInput.click({ timeout: 3000 }).catch(() => {});
+    await destinoInput.fill(destino);
+    await page.waitForTimeout(700);
+    await page.keyboard.press('ArrowDown').catch(() => {});
+    await page.keyboard.press('Enter').catch(() => {});
+    await capturarDebug(page, `diag_vehiculo_${codigo}_formulario-completo`);
+
+    const urlAntes = page.url();
+    const botonCalcular = page.getByRole('button', { name: /calcul|buscar|ver ruta|traz|ir\b/i }).first();
+    await botonCalcular.click({ timeout: 5000 }).catch(() => botonCalcular.click({ force: true }).catch(() => {}));
+    await page.waitForTimeout(4500);
+    if (page.url() === urlAntes) {
+      console.log('  La URL no cambió después de calcular en Ruta0 (puede ser normal si es una SPA) — se sigue igual y se revisa el contenido.');
+    }
+  } catch (err) {
+    console.log('  No se pudo completar el formulario de Ruta0: ' + err.message);
+    await capturarDebug(page, `diag_vehiculo_${codigo}_error`);
+    return null;
+  }
+
+  await capturarDebug(page, `diag_vehiculo_${codigo}_resultados`);
+  await volcarDiagnostico(page, 'resultados');
+  const bodyText = await page.locator('body').innerText().catch(() => '');
+
+  const distMatch = bodyText.match(/(\d{1,4}(?:[.,]\d+)?)\s*km/i);
+  const distanciaKm = distMatch ? Number(distMatch[1].replace(',', '.')) : null;
+  const precioLitroMatch =
+    bodyText.match(/(?:nafta\s*s[uú]per|s[uú]per)[^$]{0,60}\$\s?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)/i) ||
+    bodyText.match(/\$\s?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)[^.]{0,40}(?:nafta\s*s[uú]per|precio.{0,10}litro)/i);
+  const precioLitro = precioLitroMatch ? Number(precioLitroMatch[1].replace(/\./g, '').replace(',', '.')) : null;
+  console.log(`  [diagnóstico vehículo] distancia detectada: ${distanciaKm} km; precio por litro detectado: ${precioLitro}`);
+
+  if (distanciaKm && precioLitro) {
+    const litros = (distanciaKm / 100) * CONSUMO_L_CADA_100KM;
+    const valor = Math.round(litros * precioLitro);
+    return {
+      valor,
+      empresa: 'Cálculo de combustible (Ruta0, ' + distanciaKm + ' km, ' + CONSUMO_L_CADA_100KM + ' L/100km)',
+      fuente: { texto: 'Ruta0', url: page.url() }
+    };
+  }
+
+  // Respaldo: si Ruta0 ya muestra un costo total de combustible calculado
+  // por su cuenta, se usa eso (aunque puede no ser exactamente nuestro
+  // supuesto de 10 L/100km) antes de darse por vencido.
+  const totalMatch = bodyText.match(/combustible[^$]{0,40}\$\s?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)/i);
+  if (totalMatch) {
+    const valor = Number(totalMatch[1].replace(/\./g, '').replace(',', '.'));
+    if (Number.isFinite(valor) && valor > 100) {
+      return { valor, empresa: 'Cálculo de combustible (Ruta0, total mostrado por el sitio)', fuente: { texto: 'Ruta0', url: page.url() } };
+    }
+  }
+  console.log('  No se pudo extraer distancia + precio de nafta (ni un total de combustible) de la página de Ruta0.');
+  return null;
+}
+
 /* ---------- Orquestación ---------- */
 
-async function procesarFecha(idToken, browser, fecha) {
-  // User-Agent de un Chrome de escritorio real: por defecto Playwright ya
-  // manda uno parecido, pero se fija explícito por si acaso — Aerolíneas
-  // Argentinas devolvió "403 Forbidden" en las 3 rutas en una corrida real
-  // (probablemente bloquea por reputación de IP de datacenter, no por esto),
-  // así que vale la pena descartar esto como causa antes de asumir que es
-  // un bloqueo de red que no se puede arreglar desde acá.
+// El "codigo" que enlaza con los registros (records.ruta) es ruta.codigo —
+// NO ruta.id (que es el id de DOCUMENTO de Firestore, con el modo agregado
+// al final para que dos modos de la misma ruta no choquen ahí). Aéreo y
+// terrestre de una misma ruta comparten a propósito el mismo codigo, igual
+// que en el sistema viejo de rutas fijas (ej. "NQN-CABA").
+function codigoDeRuta(ruta) { return ruta.codigo || ruta.id; }
+
+async function buscarPorModo(page, ruta, fecha) {
+  const codigo = codigoDeRuta(ruta);
+  if (ruta.modo === 'aereo') return buscarAereo(page, ruta.origen, ruta.destino, codigo, fecha);
+  if (ruta.modo === 'terrestre') return buscarTerrestre(page, ruta.origen, ruta.destino, codigo, fecha);
+  if (ruta.modo === 'vehiculo') return buscarVehiculo(page, ruta.origen, ruta.destino, codigo);
+  console.log('  Modo desconocido: ' + ruta.modo);
+  return null;
+}
+
+async function procesarFecha(idToken, browser, fecha, rutas) {
   const page = await browser.newPage({
     locale: 'es-AR',
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'
   });
-  const rutas = [
-    ...AIR_ROUTES.map(r => ({ medio: 'aereo', ...r })),
-    ...BUS_ROUTES.map(r => ({ medio: 'terrestre', ...r }))
-  ];
-  for (const r of rutas) {
-    const id = recordId(fecha, r.medio, r.code);
-    console.log(`\n[${fecha}] ${r.medio} ${r.code} (${r.ciudad})`);
+  for (const ruta of rutas) {
+    // La ruta solo entra en juego a partir del día siguiente a que se creó.
+    if (ruta.createdDate && fecha <= ruta.createdDate) continue;
+
+    const codigo = codigoDeRuta(ruta);
+    const id = recordId(fecha, ruta.modo, codigo);
+    console.log(`\n[${fecha}] ${ruta.modo} ${codigo} (${ruta.origen} → ${ruta.destino})`);
     let before = null;
     try { before = await getRecord(idToken, id); } catch (err) { console.log('  Error leyendo Firestore: ' + err.message); continue; }
     if (recordValid(before)) { console.log('  Ya tiene un valor cargado, no se toca.'); continue; }
+    if (before && before.agotado) { console.log('  Ya agotó sus ' + MAX_INTENTOS + ' intentos de hoy — queda para carga manual. No se reintenta.'); continue; }
+
+    const intentosPrevios = (before && before.intentos) || 0;
 
     let resultado = null;
     try {
-      resultado = r.medio === 'aereo' ? await buscarAereo(page, r.ciudad, r.code.split('-')[0], fecha) : await buscarTerrestre(page, r.ciudad, r.code.split('-')[0], fecha);
+      resultado = await buscarPorModo(page, ruta, fecha);
     } catch (err) {
       console.log('  Error buscando: ' + err.message);
     }
-    await capturarDebug(page, `${fecha}_${r.medio}_${r.code}${resultado ? '' : '_SIN-RESULTADO'}`);
-    if (!resultado) { console.log('  No se pudo confirmar un valor con la fuente. Queda pendiente.'); continue; }
+    await capturarDebug(page, `${fecha}_${ruta.modo}_${codigo}${resultado ? '' : '_SIN-RESULTADO'}`);
 
     const nowIso = new Date().toISOString();
-    const after = {
-      fecha, medio: r.medio, ruta: r.code, empresa: resultado.empresa, valor: resultado.valor,
-      fuente: resultado.fuente, tipo: 'automatico',
+    if (resultado) {
+      const after = {
+        fecha, medio: ruta.modo, ruta: codigo, empresa: resultado.empresa, valor: resultado.valor,
+        fuente: resultado.fuente, tipo: 'automatico', intentos: intentosPrevios + 1, agotado: false,
+        updatedAt: nowIso, updatedBy: ROBOT_EMAIL, updatedByName: 'Proceso automático'
+      };
+      try {
+        await writeRecord(idToken, id, after);
+        await writeHistoryEntry(idToken, {
+          recordId: id, fecha, medio: ruta.modo, ruta: codigo,
+          accion: 'crear', cambios: 'Cargado automáticamente: ' + after.empresa + ' — $' + after.valor,
+          userEmail: ROBOT_EMAIL, userName: 'Proceso automático',
+          ts: nowIso, tsDate: nowIso.slice(0, 10)
+        });
+        console.log('  Guardado: ' + after.empresa + ' — $' + after.valor);
+      } catch (err) {
+        console.log('  Error guardando en Firestore: ' + err.message);
+      }
+      continue;
+    }
+
+    // Sin resultado: cuenta como un intento agotado. Al llegar a
+    // MAX_INTENTOS se marca agotado:true (recién ahí la página habilita la
+    // carga manual excepcional para esta fecha/ruta) y queda constancia en
+    // el historial, como pidió el usuario ("debe quedar reportado").
+    const nuevosIntentos = intentosPrevios + 1;
+    const agotado = nuevosIntentos >= MAX_INTENTOS;
+    const pendiente = {
+      fecha, medio: ruta.modo, ruta: codigo, empresa: null, valor: null,
+      fuente: null, tipo: 'pendiente', intentos: nuevosIntentos, agotado,
       updatedAt: nowIso, updatedBy: ROBOT_EMAIL, updatedByName: 'Proceso automático'
     };
     try {
-      await writeRecord(idToken, id, after);
-      await writeHistoryEntry(idToken, {
-        recordId: id, fecha, medio: r.medio, ruta: r.code,
-        accion: 'crear', cambios: 'Cargado automáticamente: ' + after.empresa + ' — $' + after.valor,
-        userEmail: ROBOT_EMAIL, userName: 'Proceso automático',
-        ts: nowIso, tsDate: nowIso.slice(0, 10)
-      });
-      console.log('  Guardado: ' + after.empresa + ' — $' + after.valor);
+      await writeRecord(idToken, id, pendiente);
+      if (agotado) {
+        await writeHistoryEntry(idToken, {
+          recordId: id, fecha, medio: ruta.modo, ruta: codigo,
+          accion: 'agotado', cambios: 'Se agotaron los ' + MAX_INTENTOS + ' intentos automáticos del día sin poder confirmar un valor. Queda habilitada la carga manual para esta fecha y ruta.',
+          userEmail: ROBOT_EMAIL, userName: 'Proceso automático',
+          ts: nowIso, tsDate: nowIso.slice(0, 10)
+        });
+        console.log('  Se agotaron los ' + MAX_INTENTOS + ' intentos de hoy. Queda pendiente para carga manual.');
+      } else {
+        console.log('  No se pudo confirmar un valor con la fuente (intento ' + nuevosIntentos + ' de ' + MAX_INTENTOS + '). Se reintenta en la próxima corrida.');
+      }
     } catch (err) {
-      console.log('  Error guardando en Firestore: ' + err.message);
+      console.log('  Error guardando el estado de intento en Firestore: ' + err.message);
     }
   }
   await page.close();
@@ -603,6 +690,12 @@ async function procesarFecha(idToken, browser, fecha) {
   const idToken = await signIn();
   console.log('Sesión iniciada como ' + ROBOT_EMAIL);
 
+  const rutas = await obtenerRutas(idToken);
+  console.log(`Rutas configuradas: ${rutas.length}`);
+  if (!rutas.length) {
+    console.log('No hay ninguna ruta configurada todavía (pantalla "Rutas" de la página) — nada para buscar.');
+  }
+
   const fechas = new Set([todayStr()]);
   const solicitudes = await obtenerSolicitudesPendientes(idToken);
   for (const s of solicitudes) if (s.fecha) fechas.add(s.fecha);
@@ -611,7 +704,7 @@ async function procesarFecha(idToken, browser, fecha) {
   const browser = await chromium.launch();
   for (const fecha of fechas) {
     console.log(`\n--- Procesando fecha ${fecha} ---`);
-    await procesarFecha(idToken, browser, fecha);
+    await procesarFecha(idToken, browser, fecha, rutas);
   }
   await browser.close();
 

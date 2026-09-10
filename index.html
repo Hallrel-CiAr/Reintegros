@@ -26,6 +26,8 @@
     --air-soft: #e2ebf3;
     --bus: #93582b;
     --bus-soft: #f2e8dc;
+    --car: #6a4e9c;
+    --car-soft: #eae3f3;
     --good: #2e7d4f;
     --good-soft: #e2f0e6;
     --warn: #a8721f;
@@ -40,7 +42,7 @@
       --bg: #121815; --surface: #1a221d; --surface-2: #212b24; --ink: #eaf0ec; --ink-muted: #9fb0a6;
       --ink-faint: #6d7d73; --line: #2b362f; --line-strong: #3a473e; --accent: #5cab90; --accent-ink: #0d1512;
       --accent-soft: #1f342b; --accent-soft-ink: #8ecdb4; --air: #7fa9d4; --air-soft: #1c2a38; --bus: #cf9a5f;
-      --bus-soft: #302416; --good: #5fbb84; --good-soft: #1c2f22; --warn: #d9ad5c; --warn-soft: #332a15;
+      --bus-soft: #302416; --car: #b49add; --car-soft: #2a2036; --good: #5fbb84; --good-soft: #1c2f22; --warn: #d9ad5c; --warn-soft: #332a15;
       --crit: #dc8368; --crit-soft: #35201a; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 24px rgba(0,0,0,.35); --focus: #5cab90;
     }
   }
@@ -48,7 +50,7 @@
     --bg: #121815; --surface: #1a221d; --surface-2: #212b24; --ink: #eaf0ec; --ink-muted: #9fb0a6;
     --ink-faint: #6d7d73; --line: #2b362f; --line-strong: #3a473e; --accent: #5cab90; --accent-ink: #0d1512;
     --accent-soft: #1f342b; --accent-soft-ink: #8ecdb4; --air: #7fa9d4; --air-soft: #1c2a38; --bus: #cf9a5f;
-    --bus-soft: #302416; --good: #5fbb84; --good-soft: #1c2f22; --warn: #d9ad5c; --warn-soft: #332a15;
+    --bus-soft: #302416; --car: #b49add; --car-soft: #2a2036; --good: #5fbb84; --good-soft: #1c2f22; --warn: #d9ad5c; --warn-soft: #332a15;
     --crit: #dc8368; --crit-soft: #35201a; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 24px rgba(0,0,0,.35); --focus: #5cab90;
   }
   * { box-sizing: border-box; }
@@ -110,12 +112,14 @@
   .btn.small { padding: 6px 11px; font-size: 13px; border-radius: 7px; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .result-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+  .result-groups { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 14px; }
+  @media (max-width: 980px) { .result-groups { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 720px) { .result-groups { grid-template-columns: 1fr; } }
   .group-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; letter-spacing: 0.02em; }
   .swatch { width: 9px; height: 9px; border-radius: 3px; flex: none; }
   .swatch.air { background: var(--air); }
   .swatch.bus { background: var(--bus); }
+  .swatch.car { background: var(--car); }
   .fare-list { display: flex; flex-direction: column; gap: 6px; }
   .fare-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface-2); }
   .fare-card .who2 { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -209,7 +213,6 @@
       <button class="navbtn" type="button">Reportes <span class="care">▾</span></button>
       <div class="dropdown">
         <button class="dropdown-item" type="button" data-view="reporte-comprobante">Comprobante para un expediente</button>
-        <button class="dropdown-item" type="button" data-view="reporte-completitud">Completitud del relevamiento</button>
         <button class="dropdown-item" type="button" data-view="reporte-importar">Importar CSV</button>
       </div>
     </div>
@@ -221,7 +224,7 @@
       </div>
     </div>
     <div class="navitem">
-      <button class="navbtn" type="button" data-view="carga-manual">Carga Manual</button>
+      <button class="navbtn" type="button" data-view="rutas">Rutas</button>
     </div>
     <div class="navitem" id="navAccesosItem" hidden>
       <button class="navbtn" type="button" data-view="accesos">Accesos</button>
@@ -287,6 +290,7 @@
           <select id="cMedio">
             <option value="aereo">Aéreo</option>
             <option value="terrestre">Terrestre</option>
+            <option value="vehiculo">Vehículo</option>
           </select>
         </div>
         <div class="field">
@@ -298,22 +302,36 @@
     </div>
   </section>
 
-  <section class="view-panel" data-view="reporte-completitud" hidden>
-    <div class="block-head"><div><h2>Completitud del relevamiento</h2>
-      <p class="hint">Días y rutas del rango elegido que quedaron sin valor cargado.</p>
+  <section class="view-panel" data-view="rutas" hidden>
+    <div class="block-head"><div><h2>Rutas configuradas</h2>
+      <p class="hint">Cada ruta empieza a buscarse automáticamente a partir del día siguiente a que la agregás. Si una ruta nunca encuentra datos (agotó los 5 intentos varias veces), te avisa acá para que la borres — nunca se va a poder consultar.</p>
     </div></div>
     <div class="card report-card">
-      <div class="field-row">
+      <div class="field-row" style="margin-bottom:14px;">
         <div class="field">
-          <label for="rcDesde">Desde</label>
-          <input type="date" id="rcDesde" />
+          <label for="rOrigen">Origen</label>
+          <input type="text" id="rOrigen" placeholder="Ej: Viedma" />
         </div>
         <div class="field">
-          <label for="rcHasta">Hasta</label>
-          <input type="date" id="rcHasta" />
+          <label for="rDestino">Destino</label>
+          <input type="text" id="rDestino" placeholder="Ej: Bahía Blanca" />
         </div>
+        <div class="field">
+          <label for="rModo">Modo</label>
+          <select id="rModo">
+            <option value="vehiculo">Vehículo (nafta)</option>
+            <option value="terrestre">Pasaje terrestre</option>
+            <option value="aereo">Pasaje aéreo</option>
+          </select>
+        </div>
+        <button class="btn" id="btnAddRuta" type="button">Agregar ruta</button>
       </div>
-      <div style="margin-top:12px;"><button class="btn secondary" id="btnCompletitud" type="button">Generar reporte (CSV)</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Origen</th><th>Destino</th><th>Modo</th><th>Estado</th><th>Agregada</th><th></th></tr></thead>
+          <tbody id="rutasTbody"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -353,6 +371,7 @@
             <option value="">Todos</option>
             <option value="aereo">Aéreo</option>
             <option value="terrestre">Terrestre</option>
+            <option value="vehiculo">Vehículo</option>
           </select>
         </div>
         <div class="field">
@@ -392,12 +411,12 @@
   </section>
 
   <section class="view-panel" data-view="carga-manual" hidden>
-    <div class="block-head"><div><h2>Carga y corrección manual</h2></div></div>
+    <div class="block-head"><div><h2>Carga manual (excepcional)</h2></div></div>
     <div class="card">
-      <p class="hint" style="margin:0 0 12px;">Una fila por ruta. Podés cargar cualquier fecha, incluidas anteriores. Lo que edites a mano queda marcado como <strong>Manual</strong>, con tu usuario y la hora.</p>
+      <p class="hint" style="margin:0 0 12px;">Esta pantalla solo muestra las combinaciones de fecha y ruta que agotaron los 5 intentos automáticos del día y quedaron sin valor — no es un listado libre para editar cualquier cosa. Lo que cargues acá queda marcado como <strong>Manual</strong>, con tu usuario y la hora.</p>
       <div class="field-row" style="margin-bottom:12px;">
         <div class="field">
-          <label for="mFecha">Fecha a cargar</label>
+          <label for="mFecha">Fecha a revisar</label>
           <input type="date" id="mFecha" />
         </div>
       </div>

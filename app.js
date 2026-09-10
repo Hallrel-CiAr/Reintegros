@@ -1,23 +1,19 @@
 'use strict';
 
 /* ============================================================
-   Datos fijos: rutas, empresas conocidas
+   Datos fijos: modos, empresas conocidas
    ============================================================ */
-const AIR_ROUTES = [
-  { code: 'NQN-CABA', label: 'Neuquén → CABA' },
-  { code: 'BRC-CABA', label: 'Bariloche → CABA' },
-  { code: 'VDM-CABA', label: 'Viedma → CABA' }
-];
-const BUS_ROUTES = [
-  { code: 'NQN-CABA', label: 'Neuquén → CABA' },
-  { code: 'BRC-CABA', label: 'Bariloche → CABA' },
-  { code: 'VDM-CABA', label: 'Viedma → CABA' },
-  { code: 'ROC-CABA', label: 'General Roca → CABA' }
-];
-// Un solo valor de referencia por ruta y medio: aéreo = tarifa más económica
-// encontrada; terrestre = promedio de los servicios disponibles ese día.
+// Las rutas ya NO son una lista fija: cada una se configura a mano desde la
+// pantalla "Rutas" (origen, destino, modo) y se guarda en Firestore
+// (colección "rutas") — ver DB.rutas / routesFor() más abajo. Un solo valor
+// de referencia por ruta y modo: aéreo = tarifa turista más económica
+// encontrada; terrestre = valor de asiento cama/cama ejecutivo (o el mayor
+// valor encontrado si esa clase no existe); vehículo = costo de nafta
+// súper calculado para el recorrido.
+const MODOS = ['aereo', 'terrestre', 'vehiculo'];
 const AIR_COMPANIES = ['Aerolíneas Argentinas', 'JetSmart', 'Flybondi'];
 const BUS_COMPANIES = ['Chevallier', 'Andesmar', 'Condor Estrella', 'Via Bariloche'];
+const VEHICULO_COMPANIES = ['Cálculo de combustible (Ruta0)'];
 const OTRA_VALUE = '__otra__';
 
 const FIREBASE_READY = !!(typeof firebaseConfig !== 'undefined' && firebaseConfig.apiKey && !String(firebaseConfig.apiKey).startsWith('YOUR_'));
@@ -25,7 +21,7 @@ const FIREBASE_READY = !!(typeof firebaseConfig !== 'undefined' && firebaseConfi
 /* ============================================================
    Estado en memoria
    ============================================================ */
-let DB = { records: [] };
+let DB = { records: [], rutas: [] };
 let currentUser = null;      // { email, displayName }
 let editorsEmails = [];      // lista de emails autorizados a editar (además del owner)
 let canEdit = false;
@@ -60,27 +56,48 @@ function fmtDateTime(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('es-AR');
 }
-function routesFor(medio) { return medio === 'aereo' ? AIR_ROUTES : BUS_ROUTES; }
-function companiesFor(medio) { return medio === 'aereo' ? AIR_COMPANIES : BUS_COMPANIES; }
+// OJO: el "code" que enlaza con los registros (records.ruta) es
+// r.codigo — NO r.id (el id de documento de Firestore). Dos rutas con el
+// mismo origen/destino pero distinto modo (ej. Neuquén→CABA aéreo Y
+// terrestre) comparten el mismo codigo a propósito (igual que el sistema
+// viejo de rutas fijas), pero necesitan ids de documento distintos porque
+// cada doc de Firestore solo puede tener un modo. r.id se usa de respaldo
+// por si algún documento viejo no tuviera el campo codigo.
+function routesFor(medio) {
+  return DB.rutas.filter(r => r.modo === medio)
+    .map(r => ({ code: r.codigo || r.id, label: r.origen + ' → ' + r.destino }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+function companiesFor(medio) { return medio === 'aereo' ? AIR_COMPANIES : medio === 'terrestre' ? BUS_COMPANIES : VEHICULO_COMPANIES; }
 function routeLabel(medio, code) {
   const r = routesFor(medio).find(r => r.code === code);
   return r ? r.label : code;
 }
-function medioLabel(medio) { return medio === 'aereo' ? 'Aéreo' : 'Terrestre'; }
+function medioLabel(medio) { return medio === 'aereo' ? 'Aéreo' : medio === 'terrestre' ? 'Terrestre' : 'Vehículo'; }
 function recordValid(rec) { return !!(rec && rec.empresa && rec.valor != null && rec.valor !== ''); }
 function recordId(fecha, medio, ruta) { return [fecha, medio, ruta].join('|'); }
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function escapeAttr(s) { return escapeHtml(s); }
+function slugify(s) {
+  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+// El código de ruta NO incluye el modo (así aéreo y terrestre pueden
+// compartirlo para el mismo origen/destino) — el id del DOCUMENTO sí, para
+// que Firestore no choque cuando se agregan ambos modos de la misma ruta.
+function rutaCodigo(origen, destino) { return slugify(origen) + '-' + slugify(destino); }
+function rutaDocId(origen, destino, modo) { return rutaCodigo(origen, destino) + '__' + modo; }
 
 function findRecord(fecha, medio, ruta) {
   const id = recordId(fecha, medio, ruta);
   return DB.records.find(r => r.id === id);
 }
+// Una ruta solo entra en juego a partir del día SIGUIENTE a que se agrega
+// (createdDate = día de alta) — así no aparece como "pendiente" retroactivo
+// para hoy ni para el pasado apenas se la configura.
 function allRoutesForDate(fecha) {
-  const out = [];
-  for (const r of AIR_ROUTES) out.push({ medio: 'aereo', ruta: r.code });
-  for (const r of BUS_ROUTES) out.push({ medio: 'terrestre', ruta: r.code });
-  return out.map(x => ({ ...x, fecha }));
+  return DB.rutas
+    .filter(r => !r.createdDate || fecha > r.createdDate)
+    .map(r => ({ medio: r.modo, ruta: r.codigo || r.id, fecha }));
 }
 function pendingRoutesForDate(fecha) {
   return allRoutesForDate(fecha).filter(s => !recordValid(findRecord(s.fecha, s.medio, s.ruta)));
@@ -130,7 +147,8 @@ const LS_KEYS = {
   historial: 'sosunc_demo_historial',
   editors: 'sosunc_demo_editors',
   user: 'sosunc_demo_user',
-  solicitudes: 'sosunc_demo_solicitudes'
+  solicitudes: 'sosunc_demo_solicitudes',
+  rutas: 'sosunc_demo_rutas'
 };
 function lsGet(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } }
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* almacenamiento no disponible */ } }
@@ -143,6 +161,7 @@ const DemoBackend = {
     cb.onAuthChange(lsGet(LS_KEYS.user, null));
     cb.onRecordsChange(lsGet(LS_KEYS.records, []));
     cb.onEditorsChange(lsGet(LS_KEYS.editors, []));
+    cb.onRutasChange(lsGet(LS_KEYS.rutas, []));
   },
   async signInDemo(email, name) {
     const user = { email: String(email).trim().toLowerCase(), displayName: (name && name.trim()) || String(email).split('@')[0] };
@@ -198,6 +217,18 @@ const DemoBackend = {
     const list = lsGet(LS_KEYS.solicitudes, []);
     list.unshift({ fecha, estado: 'pendiente', requestedBy: user.email, requestedByName: user.displayName || user.email, requestedAt: new Date().toISOString() });
     lsSet(LS_KEYS.solicitudes, list);
+  },
+  async addRuta(id, ruta) {
+    const list = lsGet(LS_KEYS.rutas, []);
+    if (list.some(r => r.id === id)) throw new Error('Esa ruta ya existe.');
+    list.push({ ...ruta, id });
+    lsSet(LS_KEYS.rutas, list);
+    this._cb.onRutasChange(list);
+  },
+  async deleteRuta(id) {
+    const list = lsGet(LS_KEYS.rutas, []).filter(r => r.id !== id);
+    lsSet(LS_KEYS.rutas, list);
+    this._cb.onRutasChange(list);
   }
 };
 
@@ -211,7 +242,7 @@ function loadScript(src) {
 
 const RealBackend = {
   mode: 'real',
-  _cb: null, _db: null, _auth: null, _unsubRecords: null, _unsubEditors: null,
+  _cb: null, _db: null, _auth: null, _unsubRecords: null, _unsubEditors: null, _unsubRutas: null,
   async init(cb) {
     this._cb = cb;
     try {
@@ -228,7 +259,8 @@ const RealBackend = {
     this._auth.onAuthStateChanged(user => {
       if (this._unsubRecords) { this._unsubRecords(); this._unsubRecords = null; }
       if (this._unsubEditors) { this._unsubEditors(); this._unsubEditors = null; }
-      if (!user) { cb.onAuthChange(null); cb.onRecordsChange([]); cb.onEditorsChange([]); return; }
+      if (this._unsubRutas) { this._unsubRutas(); this._unsubRutas = null; }
+      if (!user) { cb.onAuthChange(null); cb.onRecordsChange([]); cb.onEditorsChange([]); cb.onRutasChange([]); return; }
       cb.onAuthChange({ email: user.email, displayName: user.displayName || user.email });
       this._unsubRecords = this._db.collection('records').onSnapshot(
         snap => cb.onRecordsChange(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
@@ -236,6 +268,10 @@ const RealBackend = {
       );
       this._unsubEditors = this._db.collection('config').doc('editors').onSnapshot(
         doc => cb.onEditorsChange((doc.exists && doc.data().emails) || []),
+        err => cb.onError && cb.onError(err)
+      );
+      this._unsubRutas = this._db.collection('rutas').onSnapshot(
+        snap => cb.onRutasChange(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
         err => cb.onError && cb.onError(err)
       );
     });
@@ -293,6 +329,15 @@ const RealBackend = {
       fecha, estado: 'pendiente', requestedBy: user.email,
       requestedByName: user.displayName || user.email, requestedAt: new Date().toISOString()
     });
+  },
+  async addRuta(id, ruta) {
+    const ref = this._db.collection('rutas').doc(id);
+    const doc = await ref.get();
+    if (doc.exists) throw new Error('Esa ruta ya existe.');
+    await ref.set(ruta);
+  },
+  async deleteRuta(id) {
+    await this._db.collection('rutas').doc(id).delete();
   }
 };
 
@@ -376,7 +421,7 @@ function renderConsulta() {
     return html;
   }
 
-  wrap.innerHTML = groupHtml('aereo', 'Aéreo', 'air') + groupHtml('terrestre', 'Terrestre', 'bus');
+  wrap.innerHTML = groupHtml('aereo', 'Aéreo', 'air') + groupHtml('terrestre', 'Terrestre', 'bus') + groupHtml('vehiculo', 'Vehículo', 'car');
   wrap.querySelectorAll('[data-hist-record]').forEach(btn => {
     btn.addEventListener('click', () => openRecordHistory(btn.dataset.histRecord));
   });
@@ -461,7 +506,7 @@ async function forzarActualizacion() {
   if (!canEdit) { toast('No tenés permisos para pedir la actualización.'); return; }
   try {
     await Backend.requestAutoUpdate(todayStr(), currentUser);
-    toast('Pedido registrado. El proceso automático lo toma en su próxima corrida (dentro de las próximas 2 horas).');
+    toast('Pedido registrado. El proceso automático lo toma en su próxima corrida (5hs ART, o alguno de los reintentos hasta las 7hs).');
   } catch (err) {
     toast('No se pudo registrar el pedido: ' + (err && err.message ? err.message : 'error'));
   }
@@ -498,17 +543,25 @@ function manualRowHtml(fecha, medio, ruta) {
     '<td><button type="button" class="btn small row-save" data-action="save-row">Guardar</button></td>' +
     '</tr>';
 }
+// La carga manual ya no es una tabla libre para cualquier fecha/ruta: solo
+// aparece una fila cuando la búsqueda automática agotó sus 5 intentos del
+// día para esa combinación puntual (rec.agotado, escrito por el script) y
+// sigue sin valor — el resto del tiempo no hay nada para editar acá.
 function renderManualTable() {
   const fecha = document.getElementById('mFecha').value || todayStr();
   const tbody = document.getElementById('manualTbody');
-  let html = '';
-  for (const r of AIR_ROUTES) html += manualRowHtml(fecha, 'aereo', r.code);
-  for (const r of BUS_ROUTES) html += manualRowHtml(fecha, 'terrestre', r.code);
-  tbody.innerHTML = html;
-  tbody.querySelectorAll('tr').forEach(tr => {
-    const rec = findRecord(...tr.dataset.rid.split('|'));
-    if (!recordValid(rec)) tr.classList.add('pending-row');
+  const targets = allRoutesForDate(fecha).filter(s => {
+    const rec = findRecord(s.fecha, s.medio, s.ruta);
+    return rec && rec.agotado && !recordValid(rec);
   });
+  if (!targets.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="hint" style="padding:14px 8px;">No hay valores pendientes de carga manual para esta fecha (o todavía no se agotaron los intentos automáticos de hoy).</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const s of targets) html += manualRowHtml(s.fecha, s.medio, s.ruta);
+  tbody.innerHTML = html;
+  tbody.querySelectorAll('tr').forEach(tr => tr.classList.add('pending-row'));
   applyEditLock();
 }
 function wireManualTable() {
@@ -545,6 +598,78 @@ function wireManualTable() {
       toast('Valor guardado.');
     } catch (err) {
       toast('No se pudo guardar: ' + (err && err.message ? err.message : 'error'));
+    }
+  });
+}
+
+/* ============================================================
+   Render: pantalla de Rutas configuradas
+   ============================================================ */
+function populateRouteSelects() {
+  const allRoutes = MODOS.flatMap(m => routesFor(m).map(r => ({ ...r, medio: m })))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  populateSelect(document.getElementById('qRuta'), allRoutes, true);
+  populateSelect(document.getElementById('hRuta'), allRoutes, true);
+  const cMedio = document.getElementById('cMedio');
+  if (cMedio) populateSelect(document.getElementById('cRuta'), routesFor(cMedio.value || 'aereo'), false);
+}
+function renderRutasAdmin() {
+  const tbody = document.getElementById('rutasTbody');
+  if (!tbody) return;
+  if (!DB.rutas.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="hint" style="padding:14px 8px;">Todavía no hay rutas configuradas.</td></tr>';
+    return;
+  }
+  const rows = DB.rutas.slice().sort((a, b) => (a.origen + a.destino).localeCompare(b.origen + b.destino));
+  tbody.innerHTML = rows.map(r => {
+    const recs = DB.records.filter(x => x.ruta === (r.codigo || r.id) && x.medio === r.modo).sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const last = recs[recs.length - 1];
+    let estado;
+    if (last && last.agotado && !recordValid(last)) estado = '<span class="badge crit">⚠ Sin datos (último intento: ' + escapeHtml(last.fecha) + ')</span>';
+    else if (recs.some(recordValid)) estado = '<span class="badge automatico">OK</span>';
+    else estado = '<span class="hint">Sin corridas todavía</span>';
+    return '<tr><td>' + escapeHtml(r.origen) + '</td><td>' + escapeHtml(r.destino) + '</td><td>' + medioLabel(r.modo) + '</td>' +
+      '<td>' + estado + '</td><td>' + escapeHtml(r.createdDate || '') + '</td>' +
+      '<td><button class="btn small danger" data-del-ruta="' + escapeAttr(r.id) + '" type="button">Borrar</button></td></tr>';
+  }).join('');
+  tbody.querySelectorAll('[data-del-ruta]').forEach(btn => btn.addEventListener('click', () => {
+    if (!canEdit) { toast('No tenés permisos de edición.'); return; }
+    const id = btn.dataset.delRuta;
+    const r = DB.rutas.find(x => x.id === id);
+    if (!r) return;
+    showModal({
+      title: 'Borrar ruta',
+      bodyHtml: '<p>Se va a dejar de buscar automáticamente <strong>' + escapeHtml(r.origen) + ' → ' + escapeHtml(r.destino) + '</strong> (' + medioLabel(r.modo) + '). Los valores ya cargados para esta ruta no se borran, solo dejan de actualizarse.</p>',
+      confirmText: 'Borrar ruta', cancelText: 'Cancelar',
+      onConfirm: async () => {
+        try { await Backend.deleteRuta(id); toast('Ruta borrada.'); }
+        catch (err) { toast('No se pudo borrar: ' + (err && err.message ? err.message : 'error')); }
+      }
+    });
+  }));
+}
+function wireRutasAdmin() {
+  document.getElementById('btnAddRuta').addEventListener('click', async () => {
+    if (!canEdit) { toast('No tenés permisos de edición.'); return; }
+    const origenInput = document.getElementById('rOrigen');
+    const destinoInput = document.getElementById('rDestino');
+    const modo = document.getElementById('rModo').value;
+    const origen = origenInput.value.trim();
+    const destino = destinoInput.value.trim();
+    if (!origen || !destino) { toast('Completá origen y destino.'); return; }
+    const docId = rutaDocId(origen, destino, modo);
+    if (DB.rutas.some(r => r.id === docId)) { toast('Esa ruta y modo ya están configurados.'); return; }
+    const ruta = {
+      origen, destino, modo, codigo: rutaCodigo(origen, destino),
+      createdDate: todayStr(), createdAt: new Date().toISOString(),
+      createdBy: currentUser.email, createdByName: currentUser.displayName
+    };
+    try {
+      await Backend.addRuta(docId, ruta);
+      origenInput.value = ''; destinoInput.value = '';
+      toast('Ruta agregada — empieza a buscarse a partir de mañana.');
+    } catch (err) {
+      toast('No se pudo agregar: ' + (err && err.message ? err.message : 'error'));
     }
   });
 }
@@ -608,23 +733,7 @@ async function exportCsv() {
   const data = rows.map(r => [r.fecha, medioLabel(r.medio), routeLabel(r.medio, r.ruta), r.empresa, r.valor, (r.fuente && r.fuente.texto) || '', (r.fuente && r.fuente.url) || '', r.tipo || '']);
   downloadCsvRows('pasajes_sosunc_' + desde + '_a_' + hasta + '.csv', header, data);
 }
-async function generarCompletitud() {
-  const desde = document.getElementById('rcDesde').value;
-  const hasta = document.getElementById('rcHasta').value;
-  if (!desde || !hasta) { toast('Elegí un rango de fechas.'); return; }
-  if (desde > hasta) { toast('El rango de fechas no es válido.'); return; }
-  const missing = []; let cursor = desde; let guard = 0;
-  while (cursor <= hasta && guard < 400) {
-    for (const s of allRoutesForDate(cursor)) if (!recordValid(findRecord(s.fecha, s.medio, s.ruta))) missing.push(s);
-    cursor = addDaysStr(cursor, 1); guard++;
-  }
-  if (!missing.length) { toast('Sin pendientes: todos los días del rango están completos.'); return; }
-  const header = ['Fecha', 'Medio', 'Ruta', 'Estado'];
-  const data = missing.map(s => [s.fecha, medioLabel(s.medio), routeLabel(s.medio, s.ruta), 'Pendiente']);
-  downloadCsvRows('completitud_sosunc_' + desde + '_a_' + hasta + '.csv', header, data);
-}
-
-const MEDIO_FROM_LABEL = { 'Aéreo': 'aereo', 'Terrestre': 'terrestre' };
+const MEDIO_FROM_LABEL = { 'Aéreo': 'aereo', 'Terrestre': 'terrestre', 'Vehículo': 'vehiculo' };
 const TIPO_FROM_LABEL = { 'Automático': 'automatico', 'Estimado': 'estimado', 'Manual': 'manual' };
 let pendingImportItems = null;
 function parseImportFile(text) {
@@ -735,9 +844,14 @@ async function generarComprobante() {
   const emitido = new Date().toLocaleString('es-AR');
   const tipoMap = { automatico: 'Automático', estimado: 'Estimado', manual: 'Manual' };
   const org = 'SOSUNC · Reintegros (Dirección Social)';
+  // El jsPDF con la fuente base "helvetica" no tiene el glifo de "→"
+  // (U+2192) — se vio en un comprobante real: salía corrupto ("!'"). Para
+  // el PDF se usa un separador simple en vez de la flecha; en la página
+  // web (HTML) el routeLabel con la flecha real queda intacto.
+  const rutaPdf = routeLabel(medio, ruta).replace(/\s*→\s*/g, ' a ');
   const lineas = [
-    ['Fecha de viaje', fmtDateLong(fecha)], ['Medio', medioLabel(medio)], ['Ruta', routeLabel(medio, ruta)],
-    ['Empresa', rec.empresa], ['Valor por pasajero (ARS)', fmtARS(rec.valor)],
+    ['Fecha de viaje', fmtDateLong(fecha)], ['Medio', medioLabel(medio)], ['Ruta', rutaPdf],
+    [medio === 'vehiculo' ? 'Cálculo' : 'Empresa', rec.empresa], ['Valor por pasajero (ARS)', fmtARS(rec.valor)],
     ['Fuente', ((rec.fuente && rec.fuente.texto) || '—') + ((rec.fuente && rec.fuente.url) ? ' — ' + rec.fuente.url : '')],
     ['Estado del dato', tipoMap[rec.tipo] || rec.tipo || '—']
   ];
@@ -908,6 +1022,11 @@ function onEditorsChange(emails) {
   updateEditPill(); applyEditLock();
   if (isOwner) renderEditorList();
 }
+function onRutasChange(rutas) {
+  DB.rutas = rutas || [];
+  populateRouteSelects();
+  renderConsulta(); renderStatus(); renderManualTable(); renderHistorial(); renderRutasAdmin();
+}
 
 /* ============================================================
    Init
@@ -917,20 +1036,15 @@ function init() {
 
   const today = todayStr();
   const qFecha = document.getElementById('qFecha'); qFecha.value = today; qFecha.max = today;
-  const allRoutes = [...new Map([...AIR_ROUTES, ...BUS_ROUTES].map(r => [r.code, r])).values()];
-  populateSelect(document.getElementById('qRuta'), allRoutes, true);
   document.getElementById('mFecha').value = today; document.getElementById('mFecha').max = today;
   document.getElementById('hHasta').value = today;
   const d30 = new Date(); d30.setDate(d30.getDate() - 30);
   document.getElementById('hDesde').value = d30.toISOString().slice(0, 10);
-  populateSelect(document.getElementById('hRuta'), allRoutes, true);
   document.getElementById('auHasta').value = today;
   document.getElementById('auDesde').value = d30.toISOString().slice(0, 10);
 
   document.getElementById('cFecha').value = today; document.getElementById('cFecha').max = today;
-  populateSelect(document.getElementById('cRuta'), routesFor('aereo'), false);
-  document.getElementById('rcDesde').value = d30.toISOString().slice(0, 10);
-  document.getElementById('rcHasta').value = today;
+  populateRouteSelects(); // arranca vacío hasta que llegue el primer onRutasChange
 
   document.getElementById('qFecha').addEventListener('change', renderConsulta);
   document.getElementById('qRuta').addEventListener('change', renderConsulta);
@@ -947,7 +1061,7 @@ function init() {
     populateSelect(document.getElementById('cRuta'), routesFor(m), false);
   });
   document.getElementById('btnComprobante').addEventListener('click', generarComprobante);
-  document.getElementById('btnCompletitud').addEventListener('click', generarCompletitud);
+  wireRutasAdmin();
   document.getElementById('pendingBanner').addEventListener('click', e => {
     if (e.target.id !== 'gotoPending' && e.target.id !== 'gotoPendingYesterday') return;
     document.getElementById('mFecha').value = e.target.id === 'gotoPendingYesterday' ? addDaysStr(todayStr(), -1) : todayStr();
@@ -975,7 +1089,7 @@ function startBackend() {
   document.getElementById('gateError').hidden = true;
   authReady = false; updateEditPill();
   Backend.init({
-    onAuthChange, onRecordsChange, onEditorsChange,
+    onAuthChange, onRecordsChange, onEditorsChange, onRutasChange,
     onError: err => toast('Error: ' + (err && err.message ? err.message : 'desconocido')),
     onInitError: () => {
       authReady = true; updateEditPill();
