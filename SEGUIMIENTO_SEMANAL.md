@@ -155,3 +155,57 @@ que antes: antes una ruta que fallaba tenía 4 reintentos automáticos
 caído, ahora coincidiendo con el estreno del cron nuevo, y con impacto
 directo en el mecanismo de reintentos/agotamiento del sistema recién
 rediseñado.
+
+**Corrección aplicada por el usuario (misma tarde):** deshabilitó y volvió
+a habilitar el workflow desde la pestaña Actions de GitHub. `get_workflow`
+confirmó el toggle (`updated_at` cambió a las 16:53 ART). Quedó pendiente
+confirmar si esto destraba el scheduler recién con las ventanas de mañana
+(las de hoy ya habían pasado todas).
+
+---
+
+## 2026-09-11 (viernes)
+
+**🟡 El cron volvió a disparar solo (el disable/enable sirvió), pero con ~4-4.5hs de atraso en las 5 ventanas — y una ruta lleva 2 días seguidos sin poder cargar valor.**
+
+Buena noticia primero: las 5 ventanas de hoy SÍ generaron runs con
+`event: schedule` (algo que no pasaba desde el 7/9) — el disable/enable
+del usuario ayer a la tarde destrabó el scheduler. Pero ninguna corrió a
+su horario: las 5 ventanas (8:03/8:33/9:03/9:33/10:03 UTC) terminaron
+disparándose entre las 12:46 y las 14:13 UTC — un atraso parejo de
+~4h10m a ~4h43m en las 5, no random. Es un patrón distinto a los picos de
+:00/:30 que motivaron el ajuste del 8/9 (esto es un atraso masivo y
+constante, no una demora de minutos en el momento pico) — no tengo una
+explicación confirmada, pero no descarto que sea un efecto colateral del
+propio disable/enable (GitHub reprocesando/poniendo en cola el schedule
+recién habilitado). A seguir mañana para ver si se corrige solo con el
+tiempo.
+
+**Completitud de hoy (2026-09-11), 8 rutas configuradas (una nueva desde
+la pantalla "Rutas", con `createdDate` de hoy — todavía no le toca
+buscar, entra en juego recién mañana):**
+
+| Ruta | Modo | Valor | Nota |
+|---|---|---|---|
+| BRC-CABA | Aéreo | $198.788 (turista) | ✅ se resolvió — ayer no encontraba "Bariloche" en el autocompletado |
+| NQN-CABA | Aéreo | $414.026 (turista) | igual a ayer |
+| NQN-CABA | Terrestre | $206.000 (cama, 1 servicio) | igual a ayer |
+| ROC-CABA | Terrestre | $198.450 (cama, promedio 2 servicios) | ayer $189.000 (+5%, no parece anómalo) |
+| VDM-CABA | Aéreo | $622.645 (turista) | ✅ primera vez que resuelve — ayer decía "Sin vuelos" para ese día |
+| VDM-CABA | Terrestre | $96.500 (cama, promedio 2 servicios) | igual a ayer |
+
+**⚠️ BRC-CABA terrestre (Bariloche → Retiro) agotó hoy sus 5 intentos sin
+encontrar valor — 2do día seguido sin poder cargar (ayer quedó pendiente,
+hoy quedó agotado y ya habilita carga manual).** Mismo mensaje los 5
+intentos: "La página indica que no hay servicios para la fecha pedida."
+Sospecha (no confirmada): coincide con algo que ya se había visto antes
+del rediseño — esta ruta parece tener muy pocas salidas diarias, y con el
+cron corriendo ~4-4.5hs tarde (o sea, buscando cerca del mediodía ART en
+vez de la madrugada), es posible que la búsqueda esté cayendo después de
+que ya salió el único micro del día. Si el atraso del cron se corrige
+solo, valdría la pena ver si esta ruta empieza a resolver sin más cambios
+de código.
+
+**Acción:** se avisa al usuario — la ruta agotada necesita carga manual
+para hoy, y el atraso de ~4hs (aunque ya no es silencio total) sigue sin
+explicación confirmada.
