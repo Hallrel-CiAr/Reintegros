@@ -209,3 +209,112 @@ de código.
 **Acción:** se avisa al usuario — la ruta agotada necesita carga manual
 para hoy, y el atraso de ~4hs (aunque ya no es silencio total) sigue sin
 explicación confirmada.
+
+---
+
+## 2026-09-12 (sábado) — último día del seguimiento, evaluación final más abajo
+
+Las 5 ventanas de hoy volvieron a disparar solas (12:07 a 13:29 UTC — un
+atraso de ~3h20m a ~4hs sobre el horario nominal 8:03-10:03 UTC, similar
+al de ayer, no mejoró ni empeoró).
+
+Rutas configuradas: 8 (la nueva, `vehiculo` General Roca → Capital
+Federal agregada el 11/9, tuvo hoy su primer día activo).
+
+| Ruta | Modo | Resultado |
+|---|---|---|
+| BRC-CABA | Aéreo | Ya tenía valor (resuelto ayer) |
+| **BRC-CABA** | **Terrestre** | **🔴 Agotó de nuevo — 3er día seguido sin poder cargar** ("no hay servicios para la fecha pedida", igual que el 10/9 y el 11/9) |
+| NQN-CABA | Aéreo / Terrestre | Ya tenían valor |
+| ROC-CABA | Terrestre | Ya tenía valor |
+| VDM-CABA | Aéreo | 🟡 Agotó hoy — el propio calendario de Aerolíneas muestra "Sin vuelos" para el 12/9 (no es error, ese día puntual no hay vuelo) |
+| VDM-CABA | Terrestre | Ya tenía valor |
+| **General Roca → Capital Federal** | **Vehículo** | **🔴 Agotó en su primer día — el scraper de Ruta0 no pudo extraer ni distancia ni precio de nafta** ("distancia detectada: null km; precio por litro detectado: null") |
+
+**Confirmado en este último día:** el modo "vehículo" (scraper de Ruta0)
+necesita ajuste — no es un problema de la ruta puntual, es que el scraper
+todavía no encuentra los datos en la página real (nunca se había podido
+probar en vivo antes de hoy). Coincide con lo que ya se había anticipado
+al lanzar el rediseño.
+
+**Acción:** se incluye todo esto en la evaluación final de la semana, más
+abajo.
+
+---
+
+## 📋 Evaluación final — semana del 7 al 12/9/2026
+
+**Contexto:** esta semana tuvo dos períodos distintos que conviene no
+mezclar al leer los números: del 7 al 9/9 corría todavía el sistema
+viejo de rutas fijas (14hs ART + reintentos hasta 15:30 ART); desde el
+10/9 corre el sistema nuevo (rutas configurables, 3 modos, 5hs ART + 4
+reintentos, MAX_INTENTOS=5). El propio cambio de sistema y la migración
+de rutas pasaron a mitad de semana, así que buena parte de los primeros
+días se fue en estabilizar eso, no en medir el estado de régimen.
+
+### Confiabilidad del scheduler (GitHub Actions)
+
+El problema más persistente de la semana no fue de datos sino de que
+**el cron dejó de disparar solo varias veces**:
+- 7/9: no disparó a horario, aunque terminó apareciendo esa noche.
+- 8/9: mismo patrón de demora — se corrigió corriendo los horarios fuera
+  de los picos en punto/media hora.
+- 9/9: silencio total de 2 días (0 corridas, ni a horario ni tarde).
+- 10/9: seguía en silencio incluso con el cron nuevo recién estrenado.
+- 10/9 (tarde): se deshabilitó y volvió a habilitar el workflow a mano
+  desde GitHub — esto destrabó el scheduler.
+- 11/9 y 12/9: volvió a disparar solo los 5 intentos diarios, pero con un
+  atraso constante de ~3h20m a ~4h45m sobre el horario nominal (5-7hs ART
+  corriendo en realidad cerca del mediodía). No se pudo confirmar la
+  causa raíz; quedó mitigado (ya no hay silencio) pero no resuelto del
+  todo (el atraso persiste). Vale la pena seguir monitoreando la próxima
+  semana si el atraso se estabiliza solo o si hace falta otra acción
+  manual periódica.
+
+### Confiabilidad de la carga automática por ruta (datos, no scheduler)
+
+| Ruta | Modo | Estado |
+|---|---|---|
+| NQN-CABA | Aéreo | ✅ Muy confiable — cargó todos los días que corrió, sin ajustes |
+| NQN-CABA | Terrestre | ✅ Muy confiable — cargó todos los días, clase cama detectada bien |
+| VDM-CABA | Terrestre | ✅ Muy confiable |
+| ROC-CABA | Terrestre | ✅ Confiable — cargó todos los días una vez migrada (10/9 en adelante) |
+| BRC-CABA | Aéreo | 🟡 Necesitó un día de ajuste (no encontraba "Bariloche" en el buscador el 10/9); desde el 11/9 carga sin problema |
+| VDM-CABA | Aéreo | 🟡 Depende del día — Viedma-Buenos Aires no vuela todos los días; cuando hay vuelo carga bien (622.645 el 10/9 y 11/9), cuando no hay, agota y pide carga manual (12/9) — es esperable, no es un bug |
+| **BRC-CABA** | **Terrestre** | **🔴 La más problemática — necesitó carga manual 3 días seguidos (10, 11 y 12/9)**, siempre con el mismo mensaje "no hay servicios para la fecha". Sospecha de fondo: esta ruta parece tener muy pocas salidas diarias, y entre eso y el atraso del cron corriendo cerca del mediodía, es posible que la búsqueda esté cayendo después de que ya salió el único micro del día. Recomendación: si el atraso del cron se termina de resolver, volver a evaluar esta ruta antes de asumir que hace falta tocar el scraper. |
+| **Vehículo** (General Roca → Cap. Fed.) | Vehículo | 🔴 Solo tuvo 1 día de datos (12/9, primer día activo) y falló — el scraper de Ruta0 no extrajo distancia ni precio. Era el modo más nuevo y nunca antes probado en vivo; necesita una ronda de ajuste, como pasó en su momento con Aerolíneas y Central de Pasajes. |
+
+**Resumen de carga manual necesaria en la semana:** 2 rutas terminaron
+necesitando carga manual con cierta frecuencia (BRC-CABA terrestre, todos
+los días desde que existe; vehículo, su único día); el resto del sistema
+(5 de 7 rutas heredadas) funcionó de forma automática y estable una vez
+resuelto el bug de destino del 10/9.
+
+### Patrones de precio a destacar
+
+No se detectaron saltos de precio que parezcan errores (ningún valor 5x+
+por encima de lo reciente de su misma ruta). Las variaciones día a día
+fueron todas moderadas (ej. ROC-CABA terrestre pasó de $189.000 a
+$198.450, +5%, coherente con variación normal de tarifas). Los valores
+aéreos varían bastante de un día a otro según disponibilidad de clase
+turista (esperable, es como se pidió que se busque: el valor turista más
+bajo disponible ese día).
+
+### Balance general
+
+El rediseño del 10/9 (rutas configurables + 3 modos) cumplió el objetivo
+central — una vez corregido el bug de destino, la mayoría de las rutas
+migradas quedaron funcionando solas sin carga manual. El punto flojo de
+la semana no fue el diseño del sistema sino la infraestructura de
+scheduling de GitHub Actions (con 3 incidentes de disparo en 6 días) y
+los dos scrapers más nuevos/menos probados (BRC-CABA terrestre, que ya
+existía pero cambió de comportamiento, y el modo vehículo, completamente
+nuevo). Ninguno de los dos es un problema de los datos ya cargados —
+todo lo que automáticamente cargó valor parece confiable.
+
+Con esto se cierra la evaluación semanal acordada para el 12/9. Se
+sugiere como próximos pasos: (1) seguir un par de días más de cerca a
+BRC-CABA terrestre y confirmar si el atraso del cron era la causa real,
+y (2) depurar el scraper de vehículo con una corrida real (revisar las
+capturas de debug del artifact del 12/9 para ver qué estructura tiene la
+página de Ruta0).
